@@ -11,7 +11,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: python -m unittest discover -s tests -v
+      - run: python scripts/Run-PythonChecks.py
       - run: dotnet run --project tests/CoreChecks/CoreChecks.csproj
       - run: dotnet publish AutoScript/AutoScript.csproj -c Release -r win-x64 --self-contained false -o artifacts/AutoScript
       - uses: actions/upload-artifact@v4

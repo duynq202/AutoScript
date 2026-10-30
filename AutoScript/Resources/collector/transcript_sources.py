@@ -144,5 +144,3 @@ class Supadata:
                 raise CollectorError('Supadata trả schema transcript không hỗ trợ.')
             segments.append({'start': row['offset'] / 1000, 'text': row.get('text')})
         return render(segments), value.get('lang', '')
-
-
