@@ -2,7 +2,8 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType><TargetFramework>net8.0-windows</TargetFramework>
     <UseWPF>true</UseWPF><EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <Version>1.1.1</Version>
     <ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable>
   </PropertyGroup>
-  <ItemGroup><Content Include="Resources/**" CopyToOutputDirectory="PreserveNewest" /></ItemGroup>
+  <ItemGroup><Content Include="Resources/**" Exclude="Resources/**/__pycache__/**;Resources/**/*.pyc" CopyToOutputDirectory="PreserveNewest" /></ItemGroup>
 </Project>

@@ -24,6 +24,14 @@ dotnet publish AutoScript/AutoScript.csproj -c Release -r win-x64 --self-contain
 
 Chạy `artifacts/AutoScript/AutoScript.exe`. Máy chạy bản phát hành cần **.NET 8 Desktop Runtime x64** và Python 3. Giữ nguyên thư mục `Resources` cạnh executable.
 
+## Bản sửa v1.1.1 trên nền v1.1.0
+
+Không đặt timeout phía ứng dụng cho HTTP Gemini (`Timeout.InfiniteTimeSpan`). Tác vụ đang chờ không bị dừng sau năm phút như trước; chỉ nút Hủy/đóng ứng dụng hoặc lỗi thực tế từ mạng/API mới ngắt chờ. Máy chủ, proxy hoặc hệ điều hành vẫn có thể tự đóng kết nối; ứng dụng không thể bảo đảm phía dịch vụ giữ kết nối vô hạn. Giới hạn ngắn của tiến trình Python kiểm tra file không phải thời hạn sinh kịch bản Gemini.
+
+Tự viết lần lượt đủ các phần rồi **ghép bằng chương trình** với đúng một newline, kiểm tra tổng bằng Python và lưu duy nhất một TXT. Bước rà soát chỉ xin metadata đánh giá, không bắt AI sinh lại toàn bộ văn bản. Nếu cần sửa nội dung, chỉ sửa riêng phần lỗi, kiểm tra lại rồi ghép lại; file cuối khớp chính xác nội dung các `partN.txt` sau rà soát. Điều này tránh bước xuất bản dài bị cắt bởi giới hạn đầu ra model.
+
+Đây là nhánh bảo trì `release/v1.1`, giữ giao diện tự động của v1.1.0. Các thay đổi transcript/hàng đợi ở nhánh main được giữ riêng.
+
 ## Sử dụng — phiên bản tự động
 
 1. Nhập API key; nhấn **Tải model**, chọn model có quota hoặc nhập model ID.
@@ -49,9 +57,9 @@ K13 được đưa đầy đủ vào system prompt; Gemini phải tự rà soát
 - API key chỉ giữ trong bộ nhớ cửa sổ, gửi qua header `x-goog-api-key`, không ghi file hoặc đưa vào URL. Không có cơ chế ghi log API key.
 - Kịch bản, bản tham khảo và hồ sơ continuity được gửi tới Google Gemini. Mỗi lần tạo/sửa có thể phát sinh phí; không tự retry lỗi quota.
 - File làm việc lưu tại `%LOCALAPPDATA%/AutoScript/<thời-gian-id>/`: source, reference, outline, style guide, từng phần, lesson, bản cuối, Story Bible và narrative audit. Tự xóa thư mục khi không cần. Chưa có giao diện mở lại dự án sau khi tắt ứng dụng.
-- Sau rà soát toàn truyện, `full_script.txt` là bản cuối có thể đã được sửa; các `partN.txt` là bản duyệt trước rà soát.
+- Sau rà soát toàn truyện, `full_script.txt` là bản cuối ghép từ các `partN.txt` đã kiểm tra và cập nhật nếu có sửa riêng phần.
 - Hủy dừng yêu cầu phía ứng dụng, không bảo đảm Google ngừng tính phí. Lỗi mạng, hết quota, thiếu Python hoặc bị cắt do giới hạn model sẽ hiển thị để thử lại; không xuất phần chưa đạt kiểm tra.
-- Độ dài lớn cần model đủ context và output quota. Bước rà soát toàn truyện trả lại toàn bộ văn bản, nên bản dài có thể vượt giới hạn đầu ra của model; ứng dụng phát hiện và từ chối phản hồi bị cắt. Chọn model phù hợp hoặc giảm độ dài.
+- Độ dài lớn cần model đủ context và output quota. Bước rà soát không sinh lại toàn bộ văn bản; ứng dụng ghép các phần cục bộ. Từng phần và bản vá vẫn cần vừa giới hạn đầu ra model; phản hồi bị cắt bị từ chối rõ ràng. Chọn model phù hợp hoặc giảm độ dài.
 - WPF chỉ chạy trên Windows. Linux có thể cross-build và kiểm tra service/Python, không chạy được giao diện.
 
 ## Kiểm thử

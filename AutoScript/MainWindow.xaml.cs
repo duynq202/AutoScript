@@ -24,9 +24,9 @@ public partial class MainWindow : Window
         if (running != null) return;
         using var cts = new CancellationTokenSource(); running = cts;
         Inputs.IsEnabled = false; Retry.IsEnabled = OpenFolder.IsEnabled = false;
-        Cancel.IsEnabled = true; Status.Text = "Đang xử lý… Có thể hủy tác vụ.";
+        Cancel.IsEnabled = true; Status.Text = "Đang xử lý… Không giới hạn thời gian chờ Gemini. Có thể bấm Hủy.";
         try { await action(cts.Token); }
-        catch (OperationCanceledException) { Status.Text = cts.IsCancellationRequested ? "Đã hủy. Nhấn tiếp tục để chạy từ bước đang dở." : "Hết thời gian chờ. Kiểm tra model rồi nhấn tiếp tục."; }
+        catch (OperationCanceledException) { Status.Text = cts.IsCancellationRequested ? "Đã hủy. Nhấn tiếp tục để chạy từ bước đang dở." : "Kết nối bị gián đoạn từ phía dịch vụ. Ứng dụng không đặt thời hạn chờ Gemini; có thể tiếp tục."; }
         catch (InvalidOperationException ex) { Status.Text = ex.Message; }
         catch (Exception) { Status.Text = "Không hoàn tất tác vụ. Kiểm tra mạng, quyền đọc ghi thư mục và cài đặt; sau đó thử tiếp tục."; }
         finally {
@@ -40,7 +40,7 @@ public partial class MainWindow : Window
         Tabs.SelectedIndex = 1;
         var progress = new Progress<string>(message => {
             StageLabel.Text = message;
-            Status.Text = message + " Không cần duyệt từng bước.";
+            Status.Text = message + " Tự chuyển bước; không giới hạn thời gian chờ Gemini.";
             Preview.Text = session?.Current ?? "";
         });
         var counts = await AutomaticRewrite.RunToFileAsync(session!, key, model, activeOutput!, progress, ct);

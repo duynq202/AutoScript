@@ -10,7 +10,8 @@ public sealed class GeminiClient : IDisposable
     {
         http = transport ?? new HttpClient();
         http.BaseAddress = new Uri("https://generativelanguage.googleapis.com/v1beta/");
-        http.Timeout = TimeSpan.FromMinutes(5);
+        // Generation may take arbitrarily long. Only caller cancellation stops waiting.
+        http.Timeout = Timeout.InfiniteTimeSpan;
     }
     private async Task<JsonDocument> SendAsync(HttpMethod method, string path, string key, object? body, CancellationToken ct)
     {

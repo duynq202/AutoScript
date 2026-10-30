@@ -15,7 +15,7 @@ public static class AutomaticRewrite
                 Stage.Style => $"Viết phần 1/{session.PartCount}",
                 Stage.Part when session.PartNumber < session.PartCount => $"Viết phần {session.PartNumber + 1}/{session.PartCount}",
                 Stage.Part => "Tạo bài học và chuẩn bị rà soát",
-                Stage.Lesson => "Rà soát toàn bộ kịch bản",
+                Stage.Lesson => "Rà soát nội dung và ghép các phần thành một file TXT",
                 _ => "Hoàn thiện"
             };
             progress?.Report(step + "…");

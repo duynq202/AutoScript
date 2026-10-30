@@ -18,7 +18,7 @@
 <TabItem Header="2 · Tiến trình và kết quả"><Grid Margin="18"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
 <TextBlock x:Name="StageLabel" Text="Chưa có dự án" FontSize="20" FontWeight="SemiBold"/>
 <TextBox Grid.Row="1" x:Name="Preview" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" FontFamily="Consolas"/>
-<TextBlock Grid.Row="2" Text="Ứng dụng tự chuyển bước và kiểm tra bằng Python. Chỉ cần thao tác lại khi có lỗi hoặc hủy."/>
+<TextBlock Grid.Row="2" Text="Ứng dụng tự viết tất cả các phần, kiểm tra Python và ghép một file TXT. Không giới hạn thời gian chờ Gemini; có thể bấm Hủy."/>
 <WrapPanel Grid.Row="3"><Button x:Name="Retry" Content="Tiếp tục tác vụ bị gián đoạn" Click="Retry_Click" IsEnabled="False"/><Button x:Name="OpenFolder" Content="Mở thư mục kết quả" Click="OpenFolder_Click" IsEnabled="False"/></WrapPanel>
 </Grid></TabItem></TabControl>
 <DockPanel Grid.Row="2" Margin="0,12,0,0"><Button x:Name="Cancel" Content="Hủy tác vụ" DockPanel.Dock="Right" Click="Cancel_Click" IsEnabled="False"/><TextBlock x:Name="Status" Text="Sẵn sàng. Bản đầy đủ đã kèm .NET và Python." VerticalAlignment="Center"/></DockPanel>
