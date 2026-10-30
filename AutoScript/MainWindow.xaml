@@ -1,0 +1,24 @@
+<Window x:Class="AutoScript.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="AutoScript · Gemini Rewrite" Width="1200" Height="860" MinWidth="900" MinHeight="650" Background="#F3F5F9">
+<Grid Margin="24"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+<StackPanel Margin="0,0,0,12"><TextBlock Text="AutoScript" FontSize="30" FontWeight="Bold" Foreground="#183153"/><TextBlock Text="Viết câu chuyện mới từ mô típ gốc · học đặc điểm văn phong · duyệt từng phần" Foreground="#526078"/></StackPanel>
+<TabControl Grid.Row="1" x:Name="Tabs">
+<TabItem Header="1 · Đầu vào"><ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="18" x:Name="Inputs">
+<TextBlock Text="Gemini API key (chỉ giữ trong bộ nhớ)"/><PasswordBox x:Name="ApiKey" Padding="8" Margin="0,4,0,8"/>
+<DockPanel><Button DockPanel.Dock="Right" Content="Tải model" Click="LoadModels_Click"/><ComboBox x:Name="Models" IsEditable="True" MinWidth="260" Margin="0,4,8,8" VerticalContentAlignment="Center" ToolTip="Tải danh sách model hỗ trợ generateContent hoặc nhập model ID"/></DockPanel>
+<TextBlock Text="Khoảng độ dài đầu ra (số từ, không gồm bài học). Để trống cả hai để dùng số từ bản gốc."/>
+<StackPanel Orientation="Horizontal"><TextBox x:Name="MinWords" Width="140" ToolTip="Số từ tối thiểu"/><TextBlock Text=" đến " VerticalAlignment="Center"/><TextBox x:Name="MaxWords" Width="140" ToolTip="Số từ tối đa"/></StackPanel>
+<DockPanel><Button Content="Mở TXT…" DockPanel.Dock="Right" Click="OpenSource_Click"/><TextBlock Text="Kịch bản gốc" VerticalAlignment="Center"/></DockPanel>
+<TextBox x:Name="Source" Height="180" AcceptsReturn="True" TextWrapping="Wrap"/>
+<DockPanel><Button Content="Mở TXT…" DockPanel.Dock="Right" Click="OpenReference_Click"/><TextBlock Text="Kịch bản tham khảo để học văn phong" VerticalAlignment="Center"/></DockPanel>
+<TextBox x:Name="Reference" Height="180" AcceptsReturn="True" TextWrapping="Wrap"/>
+<TextBlock Text="Theo skill: đầu ra tiếng Anh Mỹ; ít nhất ba phần; duyệt outline → văn phong → từng phần → bài học và xuất file. Nội dung sẽ được gửi đến Google Gemini. Dự án làm việc lưu cục bộ trong LocalAppData/AutoScript."/>
+<Button Content="Bắt đầu · Đếm bằng Python và lập outline" Click="Start_Click" HorizontalAlignment="Left"/>
+</StackPanel></ScrollViewer></TabItem>
+<TabItem Header="2 · Duyệt nội dung"><Grid Margin="18"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+<TextBlock x:Name="StageLabel" Text="Chưa có dự án" FontSize="20" FontWeight="SemiBold"/>
+<TextBox Grid.Row="1" x:Name="Preview" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" FontFamily="Consolas"/>
+<StackPanel Grid.Row="2"><TextBlock Text="Góp ý để tạo lại bước hiện tại (không thay đổi các phần đã duyệt)"/><TextBox x:Name="Feedback" Height="65" AcceptsReturn="True" TextWrapping="Wrap"/></StackPanel>
+<WrapPanel Grid.Row="3"><Button x:Name="Approve" Content="Duyệt và tiếp tục" Click="Approve_Click" IsEnabled="False"/><Button x:Name="Revise" Content="Tạo lại theo góp ý" Click="Revise_Click" IsEnabled="False"/><Button x:Name="Export" Content="Xuất file TXT…" Click="Export_Click" IsEnabled="False"/></WrapPanel>
+</Grid></TabItem></TabControl>
+<DockPanel Grid.Row="2" Margin="0,12,0,0"><Button x:Name="Cancel" Content="Hủy tác vụ" DockPanel.Dock="Right" Click="Cancel_Click" IsEnabled="False"/><TextBlock x:Name="Status" Text="Sẵn sàng. Cần Windows, .NET tám và Python ba." VerticalAlignment="Center"/></DockPanel>
+</Grid></Window>

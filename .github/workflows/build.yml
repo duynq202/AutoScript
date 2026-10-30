@@ -1,0 +1,20 @@
+name: Build and check
+on: [push, pull_request, workflow_dispatch]
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m unittest discover -s tests -v
+      - run: dotnet run --project tests/CoreChecks/CoreChecks.csproj
+      - run: dotnet publish AutoScript/AutoScript.csproj -c Release -r win-x64 --self-contained false -o artifacts/AutoScript
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AutoScript-win-x64
+          path: artifacts/AutoScript
