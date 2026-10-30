@@ -11,9 +11,14 @@ public partial class MainWindow : Window
     private CancellationTokenSource? running;
     private string? activeOutput;
     private bool outputReady;
+    private readonly System.Collections.ObjectModel.ObservableCollection<BatchItem> batch = [];
+    private string[] collectedFiles = [];
+    private string? collectedFolder;
     public MainWindow()
     {
         InitializeComponent();
+        BatchGrid.ItemsSource = batch;
+        LoadLocalSettings();
         OutputPath.Text = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
             "AutoScript", $"full_script_{DateTime.Now:yyyyMMdd_HHmmss}.txt");
     }
@@ -23,6 +28,7 @@ public partial class MainWindow : Window
     {
         if (running != null) return;
         using var cts = new CancellationTokenSource(); running = cts;
+        TranscriptInputs.IsEnabled = BatchInputs.IsEnabled = false;
         Inputs.IsEnabled = false; Retry.IsEnabled = OpenFolder.IsEnabled = false;
         Cancel.IsEnabled = true; Status.Text = "Đang xử lý… Có thể hủy tác vụ.";
         try { await action(cts.Token); }
@@ -30,7 +36,7 @@ public partial class MainWindow : Window
         catch (InvalidOperationException ex) { Status.Text = ex.Message; }
         catch (Exception) { Status.Text = "Không hoàn tất tác vụ. Kiểm tra mạng, quyền đọc ghi thư mục và cài đặt; sau đó thử tiếp tục."; }
         finally {
-            running = null; Inputs.IsEnabled = true; Cancel.IsEnabled = false;
+            running = null; TranscriptInputs.IsEnabled = BatchInputs.IsEnabled = true; Inputs.IsEnabled = true; Cancel.IsEnabled = false;
             Retry.IsEnabled = session != null && !outputReady;
             OpenFolder.IsEnabled = outputReady;
         }
@@ -109,5 +115,5 @@ public partial class MainWindow : Window
         if (running != null) { e.Cancel = true; running.Cancel(); Status.Text = "Đang hủy tác vụ. Đóng cửa sổ lại sau khi tác vụ dừng."; }
         base.OnClosing(e);
     }
-    protected override void OnClosed(EventArgs e) { ApiKey.Clear(); client.Dispose(); base.OnClosed(e); }
+    protected override void OnClosed(EventArgs e) { ApiKey.Clear(); YouTubeKey.Clear(); TranscriptKey.Clear(); client.Dispose(); base.OnClosed(e); }
 }

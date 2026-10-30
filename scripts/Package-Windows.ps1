@@ -15,13 +15,15 @@ try {
     New-Item -ItemType Directory -Force $pythonDest | Out-Null
     Copy-Item "$pythonSource/*" $pythonDest -Recurse -Force
     Copy-Item README.md $output
+    Copy-Item docs (Join-Path $output 'docs') -Recurse -Force
     @'
 AutoScript - Windows x64, full portable package
 Extract the entire ZIP, then open AutoScript.exe.
 .NET Desktop Runtime and Python are included. No separate installation required.
 Enter your Gemini API key and load models. Internet and Gemini quota are required.
 Keep Resources alongside AutoScript.exe.
-See README.md for the workflow and data storage details.
+See README.md and docs/TRANSCRIPTS.md for configuration.
+YouTube collection needs a YouTube Data API key and a vidIQ MCP or Supadata key.
 '@ | Set-Content (Join-Path $output 'START-HERE.txt') -Encoding utf8
     # Exercise the same bundled interpreter used by the application, on Windows.
     $probe = Join-Path $repo 'artifacts/python-probe.txt'

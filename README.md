@@ -2,6 +2,14 @@
 
 Ứng dụng Windows viết lại kịch bản theo file `rewrite-script_SKILL.md` đính kèm. Nhập Gemini API key, chọn model, nhập kịch bản gốc, khoảng số từ mong muốn và kịch bản tham khảo. Tự xử lý một mạch và xuất duy nhất một file kịch bản TXT UTF-8.
 
+## Transcript và viết lại hàng loạt — v1.2.0
+
+- Tab **Transcript YouTube**: nhập URL kênh, tự lấy danh sách video công khai bằng YouTube Data API, lấy transcript bằng vidIQ MCP (endpoint người dùng cung cấp) hoặc Supadata native; lưu TXT/CSV, theo dõi tiến độ, retry và bỏ qua file thành công khi chạy lại. Cần cấu hình API key một lần, không cần nhập URL từng video.
+- Tab **Viết lại hàng loạt**: nhận transcript đã tải hoặc nhiều file TXT, viết tuần tự qua Gemini; một file hoàn chỉnh cho mỗi kịch bản, lỗi một mục không chặn mục sau.
+- **Lưu văn phong mặc định**: tự nạp bản tham khảo khi mở ứng dụng. Khóa nguồn transcript/YouTube có thể lưu trong Windows Credential Manager.
+
+[Hướng dẫn cấu hình, cấu trúc file, nguồn tài liệu và giới hạn xác minh tích hợp](docs/TRANSCRIPTS.md). Thu thập transcript không chạy AI. vidIQ MCP chưa được kiểm thử trực tiếp vì môi trường phát triển chặn truy cập endpoint; adapter phát hiện tool/schema thật khi kết nối và từ chối dữ liệu không hỗ trợ. Supadata đã được đối chiếu SDK chính thức; cả hai nguồn cần kiểm thử bằng tài khoản có quyền/quota.
+
 ## Tải bản đầy đủ
 
 Xem [GitHub Releases](https://github.com/duynq202/AutoScript/releases/latest) và tải **AutoScript-win-x64-full.zip**. Giải nén toàn bộ, mở **AutoScript.exe**. Gói này kèm .NET Desktop Runtime và Python 3.12.10 x64, không cần cài riêng. Cần Windows 10/11 x64, Internet và API key Gemini có quota. Có file SHA-256 đi kèm để kiểm tra tải xuống.

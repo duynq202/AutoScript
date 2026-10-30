@@ -11,6 +11,7 @@
 <TextBox x:Name="Source" Height="180" AcceptsReturn="True" TextWrapping="Wrap"/>
 <DockPanel><Button Content="Mở TXT…" DockPanel.Dock="Right" Click="OpenReference_Click"/><TextBlock Text="Kịch bản tham khảo để học văn phong" VerticalAlignment="Center"/></DockPanel>
 <TextBox x:Name="Reference" Height="180" AcceptsReturn="True" TextWrapping="Wrap"/>
+<WrapPanel><Button Content="Lưu văn phong mặc định" Click="SaveDefaultStyle_Click"/><Button Content="Xóa mặc định đã lưu" Click="ClearDefaultStyle_Click"/></WrapPanel>
 <TextBlock Text="Đầu ra tiếng Anh Mỹ. Tự chạy outline → văn phong → viết các phần → rà soát → lưu một file TXT. Nội dung sẽ được gửi đến Google Gemini. Dự án làm việc lưu cục bộ trong LocalAppData/AutoScript."/>
 <TextBlock Text="File TXT đầu ra"/><DockPanel><Button DockPanel.Dock="Right" Content="Chọn nơi lưu…" Click="ChooseOutput_Click"/><TextBox x:Name="OutputPath" MinWidth="300"/></DockPanel>
 <Button Content="Bắt đầu · Tự động viết và lưu TXT" Click="Start_Click" HorizontalAlignment="Left"/>
@@ -20,6 +21,33 @@
 <TextBox Grid.Row="1" x:Name="Preview" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" FontFamily="Consolas"/>
 <TextBlock Grid.Row="2" Text="Ứng dụng tự chuyển bước và kiểm tra bằng Python. Chỉ cần thao tác lại khi có lỗi hoặc hủy."/>
 <WrapPanel Grid.Row="3"><Button x:Name="Retry" Content="Tiếp tục tác vụ bị gián đoạn" Click="Retry_Click" IsEnabled="False"/><Button x:Name="OpenFolder" Content="Mở thư mục kết quả" Click="OpenFolder_Click" IsEnabled="False"/></WrapPanel>
-</Grid></TabItem></TabControl>
+</Grid></TabItem><TabItem Header="3 · Transcript YouTube"><ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="18" x:Name="TranscriptInputs">
+<TextBlock Text="Thu thập transcript cả kênh" FontSize="22" FontWeight="SemiBold"/>
+<TextBlock Text="Cấu hình API một lần bên dưới. Mỗi lượt chỉ cần URL kênh và Start. Chức năng này không gọi Gemini hay phân tích nội dung."/>
+<Expander Header="Cấu hình API và thư mục (lưu trên máy này)" IsExpanded="False" Margin="0,12">
+<StackPanel>
+<TextBlock Text="YouTube Data API v3 key"/><PasswordBox x:Name="YouTubeKey" Padding="8" Margin="0,4,0,8"/>
+<TextBlock Text="Nguồn transcript"/><ComboBox x:Name="TranscriptProvider" SelectedIndex="0" SelectionChanged="ProviderChanged" Margin="0,4,0,8"><ComboBoxItem Content="Supadata · native transcript" Tag="supadata"/><ComboBoxItem Content="vidIQ MCP · cần endpoint và schema hợp lệ" Tag="vidiq_mcp"/></ComboBox>
+<TextBlock Text="API key nguồn transcript (Supadata hoặc Bearer token MCP)"/><PasswordBox x:Name="TranscriptKey" Padding="8" Margin="0,4,0,8"/>
+<TextBlock Text="Endpoint MCP HTTPS (chỉ khi dùng vidIQ; lấy từ nhà cung cấp, không nhúng key vào URL)"/><TextBox x:Name="McpEndpoint"/>
+<TextBlock Text="Thư mục lưu transcript"/><DockPanel><Button DockPanel.Dock="Right" Content="Chọn…" Click="ChooseTranscriptRoot_Click"/><TextBox x:Name="TranscriptRoot"/></DockPanel>
+<TextBlock Text="Key được lưu bằng Windows Credential Manager khi nhấn Lưu cấu hình. Không ghi key vào CSV, file cấu hình hay dòng lệnh. Nguồn transcript có thể tính phí/quota riêng."/>
+<Button Content="Lưu cấu hình và key trên máy này" Click="SaveCollectorSettings_Click" HorizontalAlignment="Left"/>
+</StackPanel></Expander>
+<TextBlock Text="URL kênh YouTube (@handle hoặc /channel/ChannelID)"/><TextBox x:Name="ChannelUrl" ToolTip="https://www.youtube.com/@ChannelName"/>
+<Button Content="Start · Tự lấy toàn bộ transcript công khai" Click="Collect_Click" HorizontalAlignment="Left"/>
+<TextBlock x:Name="CollectorStatus" Text="Chưa thu thập dữ liệu." FontWeight="SemiBold" Margin="0,12"/>
+<TextBlock Text="Bỏ qua transcript thành công đã lưu; thử lại video thiếu/lỗi. Giữ nguyên ngôn ngữ, nội dung và timestamp. Không lấy video riêng tư hoặc không công khai."/>
+<WrapPanel><Button x:Name="OpenTranscripts" Content="Mở thư mục transcript" Click="OpenTranscripts_Click" IsEnabled="False"/><Button x:Name="QueueTranscripts" Content="Đưa transcript đã lấy vào hàng đợi viết lại" Click="QueueTranscripts_Click" IsEnabled="False"/></WrapPanel>
+</StackPanel></ScrollViewer></TabItem>
+<TabItem Header="4 · Viết lại hàng loạt"><Grid Margin="18"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+<StackPanel x:Name="BatchInputs"><TextBlock Text="Viết lại tuần tự nhiều kịch bản" FontSize="22" FontWeight="SemiBold"/><TextBlock Text="Dùng Gemini key, model, khoảng độ dài và văn phong ở tab Đầu vào. Chỉ chạy khi bạn nhấn Viết lại hàng đợi. Mỗi kịch bản xuất một file TXT riêng."/>
+<WrapPanel><Button Content="Thêm file TXT…" Click="AddBatchFiles_Click"/><Button Content="Xóa hàng đợi" Click="ClearBatch_Click"/><Button Content="Viết lại hàng đợi / tiếp tục" Click="RunBatch_Click"/></WrapPanel>
+<TextBlock Text="Thư mục kết quả viết lại"/><DockPanel><Button DockPanel.Dock="Right" Content="Chọn…" Click="ChooseBatchRoot_Click"/><TextBox x:Name="BatchRoot"/></DockPanel>
+</StackPanel>
+<DataGrid Grid.Row="1" x:Name="BatchGrid" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" Margin="0,12"><DataGrid.Columns><DataGridTextColumn Header="Kịch bản" Binding="{Binding Name}" Width="2*"/><DataGridTextColumn Header="Trạng thái" Binding="{Binding Status}" Width="3*"/></DataGrid.Columns></DataGrid>
+<TextBlock Grid.Row="2" x:Name="BatchStatus" Text="Hàng đợi trống."/>
+</Grid></TabItem>
+</TabControl>
 <DockPanel Grid.Row="2" Margin="0,12,0,0"><Button x:Name="Cancel" Content="Hủy tác vụ" DockPanel.Dock="Right" Click="Cancel_Click" IsEnabled="False"/><TextBlock x:Name="Status" Text="Sẵn sàng. Bản đầy đủ đã kèm .NET và Python." VerticalAlignment="Center"/></DockPanel>
 </Grid></Window>
