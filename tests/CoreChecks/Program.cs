@@ -149,6 +149,66 @@ try {
         Check(transient.Calls == 1, "Sent another request after cancellation during backoff");
     }
     Console.WriteLine("PASS: 503 recovery beyond fixed retry count, Retry-After, backoff progress, unchanged prompt, retry SSE 503 without partial text, no retries for permanent/quota errors, cancellation during backoff.");
+    using (var pool = new ApiKeyPool(new[] { "a", "b", "a" }, 4, TimeSpan.Zero)) {
+        Check(pool.Count == 2 && pool.Capacity == 2, "Duplicate keys inflated concurrency");
+        using var first = await pool.RentAsync(default);
+        using var second = await pool.RentAsync(default);
+        Check(first.Number != second.Number && pool.Active == 2, "Same key used concurrently");
+        using var stop = new CancellationTokenSource();
+        var queued = pool.RentAsync(stop.Token); Check(!queued.IsCompleted, "Pool exceeded worker limit");
+        stop.Cancel(); try { await queued; throw new Exception("Queued API wait ignored cancellation"); } catch (OperationCanceledException) { }
+        first.Dispose(); using var next = await pool.RentAsync(default);
+        Check(next.Number == first.Number, "Canceled waiter leaked capacity or occupied a key");
+    }
+    using (var pool = new ApiKeyPool(new[] { "a", "b" }, 2, TimeSpan.FromMilliseconds(40))) {
+        var first = await pool.RentAsync(default); first.Dispose();
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        using var second = await pool.RentAsync(default);
+        Check(watch.Elapsed >= TimeSpan.FromMilliseconds(30), "Post-operation pause not enforced");
+    }
+    using (var rejected = new HeaderHandler((key, _) => key == "bad-test-key" ? new(HttpStatusCode.Unauthorized) : RetryHandler.Success("okay")))
+    using (var rotate = new GeminiClient(new HttpClient(rejected))) {
+        rotate.ConfigureKeys(new[] { "bad-test-key", "good-test-key" }, 2, 0);
+        Check(await rotate.GenerateAsync("unused", "fake-model", "", "", default) == "okay", "Rejected key did not switch to another key");
+        Check(rejected.Keys.SequenceEqual(new[] { "bad-test-key", "good-test-key" }), "Wrong key rotation");
+    }
+    using (var parallel = new PreparationHandler())
+    using (var multi = new GeminiClient(new HttpClient(parallel))) {
+        multi.ConfigureKeys(new[] { "first-test-key", "second-test-key" }, 2, 0);
+        var prepared = new RewriteSession(multi);
+        try {
+            await prepared.InitializeAsync(Prose(600), "Reference sample.", 600, 600, default, 500);
+            var result = await AutomaticRewrite.RunToFileAsync(prepared, "unused", "fake-model", Path.Combine(prepared.DirectoryPath, "result.txt"), null, default).WaitAsync(TimeSpan.FromSeconds(15));
+            Check(result.Words == 600 && parallel.MaxActive == 2, "Independent preparation did not run concurrently");
+            Check(parallel.OverlappingKey == false, "Parallel tasks reused one active key");
+            Check(parallel.StyleCalls == 1 && parallel.PartCalls == 3, "Prepared style was regenerated or script parts duplicated");
+            Check(parallel.MaxPartsActive == 1, "Narrative parts ran out of order");
+        } finally { if (Directory.Exists(prepared.DirectoryPath)) Directory.Delete(prepared.DirectoryPath, true); }
+    }
+    using (var failedPrep = new PreparationHandler { FailOutline = true })
+    using (var multi = new GeminiClient(new HttpClient(failedPrep))) {
+        multi.ConfigureKeys(new[] { "first-test-key", "second-test-key" }, 2, 0);
+        var prepared = new RewriteSession(multi);
+        try {
+            await prepared.InitializeAsync(Prose(600), "Reference", 600, 600, default);
+            try { await prepared.PrepareAsync("unused", "fake-model", default).WaitAsync(TimeSpan.FromSeconds(3)); throw new Exception("Failed preparation accepted"); }
+            catch (InvalidOperationException) { }
+            multi.ConfigureKeys(new[] { "first-test-key" }, 1, 0);
+            Check(!File.Exists(Path.Combine(prepared.DirectoryPath, "full_script.txt")), "Failed preparation exposed an incomplete script");
+        } finally { if (Directory.Exists(prepared.DirectoryPath)) Directory.Delete(prepared.DirectoryPath, true); }
+    }
+    using (var tooLong = new PreparationHandler { LongParts = true })
+    using (var keep = new GeminiClient(new HttpClient(tooLong))) {
+        var longer = new RewriteSession(keep);
+        try {
+            await longer.InitializeAsync(Prose(600), "Reference", 600, 600, default);
+            var result = await AutomaticRewrite.RunToFileAsync(longer, "one-test-key", "fake-model", Path.Combine(longer.DirectoryPath, "result.txt"), null, default);
+            Check(result.Words == 780 && tooLong.PartCalls == 3, "Overlong parts were rejected or regenerated");
+            Check((await longer.CountText(longer.FullScript, default)).Errors.Length == 0, "Local paragraph reflow did not pass Python");
+            Check(longer.FullScript.Split(' ', '\n').Length == 780, "Reflow changed word count");
+        } finally { if (Directory.Exists(longer.DirectoryPath)) Directory.Delete(longer.DirectoryPath, true); }
+    }
+    Console.WriteLine("PASS: pool limits, key deduplication, cancel queued work, pause between operations, key failover, independent preparation in parallel, sequential narrative parts, accepts overlong parts without rewriting, lossless paragraph reflow.");
     handler.Truncated = true;
     try { await client.GenerateAsync("fake-key", "fake-model", "", "", default); throw new Exception("Truncated response accepted"); }
     catch (InvalidOperationException) { }
@@ -253,5 +313,48 @@ sealed class RetryHandler(IEnumerable<Func<HttpResponseMessage>> responses) : Ht
         Calls++; Bodies.Add(request.Content == null ? "" : await request.Content.ReadAsStringAsync(ct));
         if (queue.Count == 0) throw new Exception("Unexpected extra retry");
         return queue.Dequeue()();
+    }
+}
+
+sealed class HeaderHandler(Func<string, int, HttpResponseMessage> response) : HttpMessageHandler
+{
+    public List<string> Keys { get; } = [];
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+    {
+        var key = request.Headers.GetValues("x-goog-api-key").Single(); Keys.Add(key);
+        return Task.FromResult(response(key, Keys.Count));
+    }
+}
+sealed class PreparationHandler : HttpMessageHandler
+{
+    private readonly object sync = new(); private readonly HashSet<string> activeKeys = [];
+    private readonly TaskCompletionSource bothPrepared = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public int MaxActive, StyleCalls, PartCalls, MaxPartsActive;
+    private int active, partsActive, prepStarted;
+    public bool OverlappingKey, LongParts, FailOutline;
+    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+    {
+        var key = request.Headers.GetValues("x-goog-api-key").Single();
+        using var document = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct));
+        string task = document.RootElement.GetProperty("contents")[0].GetProperty("parts")[0].GetProperty("text").GetString()!;
+        bool seed = task.StartsWith("Independent style"), outline = task.StartsWith("Step one"), part = task.StartsWith("Step three"), final = task.StartsWith("Step four final");
+        lock (sync) {
+            if (!activeKeys.Add(key)) OverlappingKey = true;
+            active++; MaxActive = Math.Max(active, MaxActive);
+            if (seed || task.StartsWith("Step two")) StyleCalls++;
+            if (part) { PartCalls++; partsActive++; MaxPartsActive = Math.Max(MaxPartsActive, partsActive); }
+        }
+        try {
+            if (!LongParts && (seed || outline)) {
+                if (Interlocked.Increment(ref prepStarted) == 2) bothPrepared.TrySetResult();
+                await bothPrepared.Task.WaitAsync(ct);
+            }
+            if (FailOutline && outline) return new(HttpStatusCode.BadRequest);
+            if (FailOutline && seed) await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+            await Task.Yield();
+            var prose = part && LongParts ? string.Join(" ", Enumerable.Repeat("story", 260)) : string.Join("\n", Enumerable.Repeat(string.Join(" ", Enumerable.Repeat("story", 20)), 10));
+            var payload = JsonSerializer.Serialize(new { text = final ? "Audit metadata only" : prose, bible = "Bible", audit = "Audit", contentPass = true, problems = Array.Empty<string>(), repairs = Array.Empty<object>() });
+            return RetryHandler.Success(payload);
+        } finally { lock (sync) { active--; activeKeys.Remove(key); if (part) partsActive--; } }
     }
 }

@@ -3,10 +3,42 @@ using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 namespace AutoScript.Services;
-public sealed record GeminiTransfer(string Phase, int Characters, int Events, string? Message = null);
+public sealed record GeminiTransfer(string Phase, int Characters, int Events, string? Message = null, long RequestId = 0, int KeyNumber = 0);
 public sealed class GeminiClient : IDisposable
 {
     private readonly HttpClient http;
+    private ApiKeyPool? pool;
+    private long requestSequence;
+    private sealed record RequestContext(long Id, int KeyNumber);
+    private readonly AsyncLocal<RequestContext?> context = new();
+    public bool CanPrepareInParallel => pool?.Capacity > 1;
+    public void ConfigureKeys(IEnumerable<string> keys, int concurrency = 2, int pauseSeconds = 2)
+    {
+        if (pool?.Active > 0) throw new InvalidOperationException("Không thể thay key khi còn yêu cầu API đang chạy.");
+        var replacement = new ApiKeyPool(keys, concurrency, TimeSpan.FromSeconds(pauseSeconds));
+        pool?.Dispose(); pool = replacement;
+    }
+    private void Notify(GeminiTransfer value)
+    {
+        var request = context.Value;
+        Transfer?.Invoke(request == null ? value : value with { RequestId = request.Id, KeyNumber = request.KeyNumber });
+    }
+    private sealed class RejectedKey() : InvalidOperationException("API key bị từ chối quyền; kiểm tra key và model.");
+    private sealed class AnotherKey : Exception;
+    private async Task<T> OnKeyAsync<T>(string fallback, Func<string, CancellationToken, Task<T>> action, CancellationToken ct)
+    {
+        var previous = context.Value; long id = Interlocked.Increment(ref requestSequence);
+        context.Value = new(id, 0);
+        try {
+            if (pool == null) return await action(fallback, ct);
+            Notify(new("queued", 0, 0, "Đang chờ lượt API / khoảng nghỉ giữa thao tác"));
+            using var lease = await pool.RentAsync(ct);
+            context.Value = new(id, lease.Number);
+            try { return await action(lease.Key, ct); }
+            catch (TemporaryFailure error) { lease.CoolDown(error.RetryAfter ?? TimeSpan.FromSeconds(5)); throw; }
+            catch (RejectedKey) { lease.Disable(); Notify(new("key-rejected", 0, 0, $"Key #{lease.Number} bị từ chối · chuyển key khác")); throw new AnotherKey(); }
+        } finally { Notify(new("released", 0, 0)); context.Value = previous; }
+    }
     private readonly Func<TimeSpan, CancellationToken, Task> delay;
     private sealed class TemporaryFailure(int code, TimeSpan? retryAfter = null) : Exception
     {
@@ -20,6 +52,7 @@ public sealed class GeminiClient : IDisposable
         while (true) {
             ct.ThrowIfCancellationRequested();
             try { return await operation(ct); }
+            catch (AnotherKey) { if (pool?.Enabled == 0) throw new InvalidOperationException("Tất cả API key đã bị từ chối. Kiểm tra quyền/model rồi tiếp tục."); }
             catch (TemporaryFailure error) {
                 attempts++;
                 double backoff = Math.Min(60, 5 * Math.Pow(2, Math.Min(attempts - 1, 4))) + Random.Shared.NextDouble() * 3;
@@ -27,7 +60,7 @@ public sealed class GeminiClient : IDisposable
                 if (error.RetryAfter is { } requested && requested > remaining) remaining = requested;
                 while (remaining > TimeSpan.Zero) {
                     ct.ThrowIfCancellationRequested();
-                    Transfer?.Invoke(new("retry", 0, 0, $"Gemini HTTP {error.Code} tạm thời · thử lại lần {attempts} sau {Math.Ceiling(remaining.TotalSeconds):N0}s · các phần đã xong được giữ"));
+                    Notify(new("retry", 0, 0, $"Gemini HTTP {error.Code} tạm thời · thử lại lần {attempts} sau {Math.Ceiling(remaining.TotalSeconds):N0}s · các phần đã xong được giữ"));
                     var wait = remaining > TimeSpan.FromSeconds(1) ? TimeSpan.FromSeconds(1) : remaining;
                     await delay(wait, ct);
                     remaining -= wait;
@@ -55,6 +88,7 @@ public sealed class GeminiClient : IDisposable
         TimeSpan? retryAfter = retryHeader?.Delta ?? (retryHeader?.Date is { } date ? date - DateTimeOffset.UtcNow : null);
         res.Dispose();
         if (IsTemporary((int)code)) throw new TemporaryFailure((int)code, retryAfter);
+        if (code is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden) throw new RejectedKey();
         throw new InvalidOperationException(code switch {
             HttpStatusCode.BadRequest => "Gemini từ chối yêu cầu. Kiểm tra model, kích thước đầu vào và quyền dùng model.",
             HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden => "API key không hợp lệ hoặc chưa được cấp quyền Gemini.",
@@ -67,8 +101,10 @@ public sealed class GeminiClient : IDisposable
     {
         var result = new List<string>(); string? token = null;
         do {
-            using var res = await WithRetryAsync(tokenCt => SendResponseAsync(HttpMethod.Get, "models?pageSize=100" + (token == null ? "" : "&pageToken=" + Uri.EscapeDataString(token)), key, null, tokenCt), ct);
-            using var doc = JsonDocument.Parse(await res.Content.ReadAsStringAsync(ct));
+            using var doc = await WithRetryAsync(tokenCt => OnKeyAsync(key, async (selectedKey, keyCt) => {
+                using var res = await SendResponseAsync(HttpMethod.Get, "models?pageSize=100" + (token == null ? "" : "&pageToken=" + Uri.EscapeDataString(token)), selectedKey, null, keyCt);
+                return JsonDocument.Parse(await res.Content.ReadAsStringAsync(keyCt));
+            }, tokenCt), ct);
             if (doc.RootElement.TryGetProperty("models", out var models))
                 foreach (var m in models.EnumerateArray())
                     if (m.TryGetProperty("supportedGenerationMethods", out var methods) && methods.EnumerateArray().Any(x => x.GetString() == "generateContent"))
@@ -78,7 +114,7 @@ public sealed class GeminiClient : IDisposable
         return result.Distinct().Order().ToList();
     }
     public Task<string> GenerateAsync(string key, string model, string system, string prompt, CancellationToken ct)
-        => WithRetryAsync(token => GenerateOnceAsync(key, model, system, prompt, token), ct);
+        => WithRetryAsync(token => OnKeyAsync(key, (selectedKey, keyCt) => GenerateOnceAsync(selectedKey, model, system, prompt, keyCt), token), ct);
     private async Task<string> GenerateOnceAsync(string key, string model, string system, string prompt, CancellationToken ct)
     {
         if (!System.Text.RegularExpressions.Regex.IsMatch(model, @"^[a-zA-Z0-9._-]+$")) throw new InvalidOperationException("Model ID không hợp lệ.");
@@ -107,17 +143,17 @@ public sealed class GeminiClient : IDisposable
             }
             else if (root.TryGetProperty("promptFeedback", out var feedback) && feedback.TryGetProperty("blockReason", out _))
                 throw new InvalidOperationException("Gemini chặn yêu cầu. Không có phần kịch bản nào được nhận từ yêu cầu này.");
-            Transfer?.Invoke(new("receiving", text.Length, packets));
+            Notify(new("receiving", text.Length, packets));
             return finishReason != null;
         }
-        Transfer?.Invoke(new("sending", 0, 0));
+        Notify(new("sending", 0, 0));
         try {
             using var res = await SendResponseAsync(HttpMethod.Post, $"models/{model}:streamGenerateContent?alt=sse", key, new {
                 systemInstruction = new { parts = new[] { new { text = system } } },
                 contents = new[] { new { role = "user", parts = new[] { new { text = prompt } } } },
                 generationConfig = new { responseMimeType = "application/json" }
             }, ct);
-            Transfer?.Invoke(new("headers", 0, 0));
+            Notify(new("headers", 0, 0));
             if (res.Content.Headers.ContentType?.MediaType == "text/event-stream") {
                 await using var stream = await res.Content.ReadAsStreamAsync(ct);
                 using var reader = new StreamReader(stream, Encoding.UTF8);
@@ -143,7 +179,7 @@ public sealed class GeminiClient : IDisposable
                 ? $"Luồng Gemini kết thúc khi chưa đủ phản hồi ({text.Length:N0} ký tự). Phần đang dở chưa được nhận; nhấn tiếp tục để thử lại."
                 : $"Gemini kết thúc với {finishReason}; phần đang dở bị cắt hoặc bị chặn. Các phần trước vẫn được giữ.");
             if (string.IsNullOrWhiteSpace(text.ToString())) throw new InvalidOperationException("Gemini trả nội dung trống.");
-            Transfer?.Invoke(new("complete", text.Length, packets));
+            Notify(new("complete", text.Length, packets));
             return text.ToString();
         }
         catch (Exception ex) when (ex is HttpRequestException or IOException) {
@@ -151,5 +187,5 @@ public sealed class GeminiClient : IDisposable
         }
         catch (JsonException) { throw new InvalidOperationException("Gemini trả gói dữ liệu không hợp lệ. Phần đang dở chưa được nhận; có thể thử tiếp tục."); }
     }
-    public void Dispose() => http.Dispose();
+    public void Dispose() { pool?.Dispose(); http.Dispose(); }
 }

@@ -3,9 +3,15 @@
 <StackPanel Margin="0,0,0,12"><TextBlock Text="AutoScript" FontSize="30" FontWeight="Bold" Foreground="#183153"/><TextBlock Text="Viết câu chuyện mới từ mô típ gốc · học đặc điểm văn phong · tự động viết đến khi hoàn tất" Foreground="#526078"/></StackPanel>
 <TabControl Grid.Row="1" x:Name="Tabs">
 <TabItem Header="1 · Đầu vào"><ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="18" x:Name="Inputs">
-<TextBlock Text="Gemini API key (chỉ giữ trong bộ nhớ)"/><PasswordBox x:Name="ApiKey" Padding="8" Margin="0,4,0,8"/>
+<TextBlock Text="Gemini API keys · nhập một key rồi nhấn Thêm, hoặc dùng ngay key đang nhập"/><PasswordBox x:Name="ApiKey" Padding="8" Margin="0,4,0,8"/>
+<WrapPanel><Button Content="Thêm key vào danh sách" Click="AddKey_Click"/><Button Content="Xóa key đã chọn" Click="RemoveKey_Click"/></WrapPanel>
+<ListBox x:Name="KeyList" Height="66" Margin="0,4,0,8"/>
+<WrapPanel><TextBlock Text="Số luồng API tối đa" VerticalAlignment="Center"/><ComboBox x:Name="WorkerCount" SelectedIndex="1" Width="70" Margin="8"><ComboBoxItem Content="1"/><ComboBoxItem Content="2"/><ComboBoxItem Content="3"/><ComboBoxItem Content="4"/></ComboBox>
+<TextBlock Text="Nghỉ giữa thao tác (giây)" VerticalAlignment="Center"/><ComboBox x:Name="PauseSeconds" SelectedIndex="1" Width="70" Margin="8"><ComboBoxItem Content="1"/><ComboBoxItem Content="2"/><ComboBoxItem Content="3"/><ComboBoxItem Content="5"/><ComboBoxItem Content="10"/></ComboBox>
+<TextBlock Text="Từ mỗi tác vụ viết" VerticalAlignment="Center"/><ComboBox x:Name="PartSize" SelectedIndex="1" Width="90" Margin="8"><ComboBoxItem Content="500"/><ComboBoxItem Content="750"/><ComboBoxItem Content="1000"/><ComboBoxItem Content="1500"/></ComboBox></WrapPanel>
+<TextBlock Text="Mỗi key chỉ chạy một yêu cầu. Outline và phân tích văn phong có thể chạy song song; các phần truyện viết theo thứ tự để giữ continuity. Key cùng dự án Google có thể dùng chung quota. Key chỉ giữ trong bộ nhớ."/>
 <DockPanel><Button DockPanel.Dock="Right" Content="Tải model" Click="LoadModels_Click"/><ComboBox x:Name="Models" IsEditable="True" MinWidth="260" Margin="0,4,8,8" VerticalContentAlignment="Center" ToolTip="Tải danh sách model hỗ trợ generateContent hoặc nhập model ID"/></DockPanel>
-<TextBlock Text="Khoảng độ dài đầu ra (số từ, không gồm bài học). Để trống cả hai để dùng số từ bản gốc."/>
+<TextBlock Text="Khoảng độ dài tham khảo (số từ, không gồm bài học; không viết lại chỉ vì dài hơn). Để trống cả hai để dùng số từ bản gốc."/>
 <StackPanel Orientation="Horizontal"><TextBox x:Name="MinWords" Width="140" ToolTip="Số từ tối thiểu"/><TextBlock Text=" đến " VerticalAlignment="Center"/><TextBox x:Name="MaxWords" Width="140" ToolTip="Số từ tối đa"/></StackPanel>
 <DockPanel><Button Content="Mở TXT…" DockPanel.Dock="Right" Click="OpenSource_Click"/><TextBlock Text="Kịch bản gốc" VerticalAlignment="Center"/></DockPanel>
 <TextBox x:Name="Source" Height="180" AcceptsReturn="True" TextWrapping="Wrap"/>

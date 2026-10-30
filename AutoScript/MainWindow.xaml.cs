@@ -11,6 +11,9 @@ public partial class MainWindow : Window
     private CancellationTokenSource? running;
     private string? activeOutput;
     private bool outputReady;
+    private readonly List<string> apiKeys = [];
+    private readonly System.Collections.ObjectModel.ObservableCollection<string> keyLabels = [];
+    private readonly Dictionary<long, string> requestStatus = [];
     private readonly System.Windows.Threading.DispatcherTimer ticker = new() { Interval = TimeSpan.FromSeconds(1) };
     private readonly Stopwatch elapsed = new();
     private string liveStep = "Đang xử lý", liveNetwork = "";
@@ -31,10 +34,18 @@ public partial class MainWindow : Window
         lastTransferUi = now; lastUiCharacters = value.Characters;
         Dispatcher.BeginInvoke(new Action(() => {
             if (running == null) return;
-            if (value.Phase == "retry") { lastPacket = null; liveNetwork = value.Message ?? "Gemini tạm thời quá tải · tự thử lại"; }
+            if (value.Phase == "released") { requestStatus.Remove(value.RequestId); return; }
+            if (value.RequestId > 0 && value.KeyNumber > 0) {
+                requestStatus[value.RequestId] = $"Yêu cầu {value.RequestId} · Key #{value.KeyNumber} · {value.Phase}";
+                if (value.Phase == "complete") requestStatus.Remove(value.RequestId);
+            }
+            if (value.Phase == "queued" || value.Phase == "key-rejected") { lastPacket = null; liveNetwork = value.Message ?? "Đang chờ lượt API"; }
+            else if (value.Phase == "retry") { lastPacket = null; liveNetwork = value.Message ?? "Gemini tạm thời quá tải · tự thử lại"; }
             else if (value.Phase == "sending") { lastPacket = DateTimeOffset.UtcNow; liveNetwork = "Đang chờ Gemini trả dữ liệu"; }
             else if (value.Phase == "headers") { lastPacket = DateTimeOffset.UtcNow; liveNetwork = "Đã kết nối · Gemini đang xử lý"; }
             else { lastPacket = DateTimeOffset.UtcNow; liveNetwork = value.Phase == "complete" ? $"Đã nhận xong {value.Characters:N0} ký tự" : $"Đã nhận {value.Characters:N0} ký tự · {value.Events:N0} gói"; }
+            if (value.KeyNumber > 0) liveNetwork = $"Key #{value.KeyNumber} · " + liveNetwork;
+            if (requestStatus.Count > 1) liveNetwork += $" · {requestStatus.Count} yêu cầu đang hoạt động";
             UpdateLiveStatus();
         }));
     }
@@ -48,18 +59,46 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        KeyList.ItemsSource = keyLabels;
         client.Transfer += OnTransfer;
         ticker.Tick += (_, _) => UpdateLiveStatus();
         OutputPath.Text = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
             "AutoScript", $"full_script_{DateTime.Now:yyyyMMdd_HHmmss}.txt");
     }
-    private string Key() => string.IsNullOrWhiteSpace(ApiKey.Password) ? throw new InvalidOperationException("Nhập Gemini API key.") : ApiKey.Password.Trim();
+    private string[] Keys()
+    {
+        var values = apiKeys.Concat(string.IsNullOrWhiteSpace(ApiKey.Password) ? [] : new[] { ApiKey.Password.Trim() }).Distinct(StringComparer.Ordinal).ToArray();
+        if (values.Length == 0) throw new InvalidOperationException("Nhập ít nhất một Gemini API key.");
+        return values;
+    }
+    private static int SelectedNumber(System.Windows.Controls.ComboBox box) => int.Parse(((System.Windows.Controls.ComboBoxItem)box.SelectedItem).Content.ToString()!);
+    private string ConfigureClient()
+    {
+        var keys = Keys(); client.ConfigureKeys(keys, SelectedNumber(WorkerCount), SelectedNumber(PauseSeconds)); return keys[0];
+    }
+    private void AddKey_Click(object sender, RoutedEventArgs e)
+    {
+        var value = ApiKey.Password.Trim();
+        if (value.Length == 0 || value.Any(char.IsWhiteSpace)) { Status.Text = "Nhập một key hợp lệ mỗi lần thêm."; return; }
+        if (!apiKeys.Contains(value, StringComparer.Ordinal)) apiKeys.Add(value);
+        ApiKey.Clear(); RefreshKeyLabels();
+    }
+    private void RemoveKey_Click(object sender, RoutedEventArgs e)
+    {
+        if (KeyList.SelectedIndex >= 0) apiKeys.RemoveAt(KeyList.SelectedIndex);
+        RefreshKeyLabels();
+    }
+    private void RefreshKeyLabels()
+    {
+        keyLabels.Clear(); for (int i = 0; i < apiKeys.Count; i++) keyLabels.Add($"API key #{i + 1} · đã nhập (ẩn)");
+        Status.Text = $"Đã nhập {apiKeys.Count} key trong danh sách. Key không được ghi ra file.";
+    }
     private string Model() => string.IsNullOrWhiteSpace(Models.Text) ? throw new InvalidOperationException("Tải danh sách và chọn model, hoặc nhập model ID.") : Models.Text.Trim();
     private async Task Run(Func<CancellationToken, Task> action)
     {
         if (running != null) return;
         using var cts = new CancellationTokenSource(); running = cts;
-        elapsed.Restart(); liveStep = "Chuẩn bị"; liveNetwork = ""; lastPacket = null; ticker.Start();
+        requestStatus.Clear(); elapsed.Restart(); liveStep = "Chuẩn bị"; liveNetwork = ""; lastPacket = null; ticker.Start();
         Inputs.IsEnabled = false; Retry.IsEnabled = OpenFolder.IsEnabled = false;
         Cancel.IsEnabled = true; Status.Text = "Đang xử lý… Không giới hạn thời gian chờ Gemini. Có thể bấm Hủy.";
         try { await action(cts.Token); }
@@ -88,14 +127,14 @@ public partial class MainWindow : Window
         Status.Text = $"Đã lưu {activeOutput} · Python: {counts.Words:N0} từ, {counts.Characters:N0} ký tự, {counts.Paragraphs:N0} đoạn.";
     }
     private async void LoadModels_Click(object sender, RoutedEventArgs e) => await Run(async ct => {
-        var models = await client.ModelsAsync(Key(), ct);
+        var models = await client.ModelsAsync(ConfigureClient(), ct);
         if (models.Count == 0) throw new InvalidOperationException("API key không có model hỗ trợ generateContent.");
         Models.ItemsSource = models; Models.SelectedIndex = 0; Status.Text = $"Đã tải {models.Count} model.";
     });
     private async void Start_Click(object sender, RoutedEventArgs e)
     {
         await Run(async ct => {
-            var key = Key(); var model = Model();
+            var key = ConfigureClient(); var model = Model();
             int? low = null, high = null;
             if (!string.IsNullOrWhiteSpace(MinWords.Text) || !string.IsNullOrWhiteSpace(MaxWords.Text)) {
                 if (!int.TryParse(MinWords.Text, out var l) || !int.TryParse(MaxWords.Text, out var h) || l < 600 || h < l || h > 60000)
@@ -108,7 +147,7 @@ public partial class MainWindow : Window
             // Ask only before starting when replacing an existing user file, never between AI stages.
             if (File.Exists(destination) && MessageBox.Show("File đầu ra đã tồn tại. Thay thế khi xử lý thành công?", "Lưu kết quả", MessageBoxButton.YesNo) != MessageBoxResult.Yes) return;
             var draft = new RewriteSession(client);
-            await draft.InitializeAsync(Source.Text, Reference.Text, low, high, ct);
+            await draft.InitializeAsync(Source.Text, Reference.Text, low, high, ct, SelectedNumber(PartSize));
             if (session != null) session.Progress -= OnSessionProgress;
             session = draft; session.Progress += OnSessionProgress; activeOutput = destination; outputReady = false;
             await ProcessSession(key, model, ct);
@@ -116,7 +155,7 @@ public partial class MainWindow : Window
     }
     private async void Retry_Click(object sender, RoutedEventArgs e) => await Run(async ct => {
         if (session == null || activeOutput == null) throw new InvalidOperationException("Chưa có tác vụ để tiếp tục.");
-        await ProcessSession(Key(), Model(), ct);
+        await ProcessSession(ConfigureClient(), Model(), ct);
     });
     private void ChooseOutput_Click(object sender, RoutedEventArgs e)
     {
@@ -153,5 +192,5 @@ public partial class MainWindow : Window
         if (running != null) { e.Cancel = true; running.Cancel(); Status.Text = "Đang hủy tác vụ. Đóng cửa sổ lại sau khi tác vụ dừng."; }
         base.OnClosing(e);
     }
-    protected override void OnClosed(EventArgs e) { ticker.Stop(); client.Transfer -= OnTransfer; if (session != null) session.Progress -= OnSessionProgress; ApiKey.Clear(); client.Dispose(); base.OnClosed(e); }
+    protected override void OnClosed(EventArgs e) { ticker.Stop(); client.Transfer -= OnTransfer; if (session != null) session.Progress -= OnSessionProgress; ApiKey.Clear(); apiKeys.Clear(); keyLabels.Clear(); client.Dispose(); base.OnClosed(e); }
 }

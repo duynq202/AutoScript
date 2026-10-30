@@ -24,6 +24,20 @@ dotnet publish AutoScript/AutoScript.csproj -c Release -r win-x64 --self-contain
 
 Chạy `artifacts/AutoScript/AutoScript.exe`. Máy chạy bản phát hành cần **.NET 8 Desktop Runtime x64** và Python 3. Giữ nguyên thư mục `Resources` cạnh executable.
 
+## Bản v1.1.4 — nhiều key, tác vụ nhỏ và tự động theo skill
+
+Nhập từng Gemini API key vào ô được che, nhấn **Thêm key vào danh sách**; lặp lại để thêm các key bạn có quyền sử dụng. Có thể dùng ngay một key đang nhập mà không thêm. Danh sách chỉ hiện Key số một, hai…; không ghi key vào file, nhật ký hoặc lưu mặc định. Key trùng bị loại. Xóa key đã chọn bằng nút tương ứng.
+
+Chọn tối đa **1–4 luồng API**, **khoảng nghỉ 1/2/3/5/10 giây** (mặc định hai giây) và **500/750/1.000/1.500 từ mỗi tác vụ viết** (mặc định bảy trăm năm mươi). Số yêu cầu đồng thời thực tế không vượt số key khác nhau; mỗi key chỉ có một yêu cầu hoạt động. Có khoảng nghỉ cả giữa lúc bắt đầu yêu cầu và sau khi thao tác hoàn tất. Lỗi dịch vụ tiếp tục áp dụng backoff và Retry-After.
+
+Khi có ít nhất hai key và chọn ít nhất hai luồng, **phân tích văn phong tham khảo và tạo outline/Story Bible** chạy độc lập song song. Style Guide được áp dụng sau outline; **các phần truyện vẫn viết lần lượt** theo trạng thái nhân vật, bằng chứng và phần trước. Không viết đồng thời các phần phụ thuộc nhau. Khi chỉ dùng một key/một luồng, chạy tuần tự như trước. Nếu một tác vụ chuẩn bị lỗi không phục hồi được, tác vụ chuẩn bị còn lại được hủy và chờ dừng hẳn trước khi báo lỗi.
+
+Key được luân phiên theo lượt. Key bị HTTP 401/403 được loại khỏi phiên xử lý và thử key khác; hết key có quyền thì báo lỗi. Key gặp lỗi dịch vụ được nghỉ trước khi dùng lại. Không đổi key để tự lặp lỗi quota 429. Nhiều key **cùng dự án Google thường dùng chung quota**; nhiều luồng/key không bảo đảm hết lỗi 503, và quá nhiều yêu cầu có thể làm quá tải nặng hơn. Các yêu cầu có thể tính phí trên dự án tương ứng.
+
+Skill đính kèm đã được đối chiếu, giữ nguyên bản tham chiếu. Các yêu cầu người dùng ưu tiên trong ứng dụng: **không xin xác nhận từng bước, độ dài là kế hoạch tham khảo và không viết lại chỉ để rút ngắn**. Phần dài hơn dự tính được giữ nếu đạt nội dung/định dạng; dự toán cho phần còn lại được điều chỉnh nhưng không cắt beat hoặc bỏ kết truyện. Tổng có thể dài hơn khoảng đã nhập và vẫn xuất file, với số từ thực do Python đếm. Phần quá ngắn, lỗi logic hay ký tự cấm vẫn cần sửa. Đoạn văn quá một trăm mười từ được chia dòng cục bộ, không thêm/bớt hoặc viết lại từ ngữ. Phản hồi bị API cắt giữa chừng vẫn chưa phải phần hoàn chỉnh và không được chấp nhận.
+
+Nhấn **Bắt đầu** một lần: chuẩn bị → viết đủ các phần → bài học nội bộ → rà soát → ghép cục bộ → **một file TXT kịch bản hoàn chỉnh**. Không có bước duyệt. Các cảnh báo độ dài và tiến độ ở giao diện/nhật ký, không chèn vào kịch bản. Kiểm tra Python của phần đã xác nhận được nhớ lại trong phiên, tránh chạy lặp tiến trình cho cùng văn bản.
+
 ## Bản sửa v1.1.3 — tự phục hồi HTTP 503
 
 Lỗi 503 nghĩa là Gemini hoặc máy chủ trung gian tạm thời không phục vụ được yêu cầu; không đồng nghĩa key sai. Tự thử lại phần đang xử lý khi gặp HTTP 408/500/502/503/504, kể cả lỗi 503 nằm trong luồng SSE. Chờ giãn cách khoảng 5, 10, 20, 40 rồi 60 giây (thêm một chút ngẫu nhiên); nếu máy chủ yêu cầu Retry-After lâu hơn thì chờ đủ. Hiển thị mã lỗi, số lần thử và đếm ngược.
@@ -54,7 +68,7 @@ Tự viết lần lượt đủ các phần rồi **ghép bằng chương trình
 
 1. Nhập API key; nhấn **Tải model**, chọn model có quota hoặc nhập model ID.
 2. Dán kịch bản gốc và bản tham khảo hoặc mở TXT UTF-8. Chưa trích xuất DOCX/PDF/SRT.
-3. Nhập khoảng số từ hoặc để trống cả hai mốc để dùng số từ bản gốc. Mục tiêu là trung điểm khoảng, từ 600–60.000 từ. Ít nhất ba phần; kiểm tra ±10% từng phần, tổng nằm trong khoảng nhập và ±5% mục tiêu.
+3. Nhập khoảng số từ hoặc để trống cả hai mốc để dùng số từ bản gốc. Mục tiêu là trung điểm khoảng, từ 600–60.000 từ. Ít nhất ba phần; dùng độ dài từng phần và tổng làm kế hoạch; chấp nhận dài hơn khi nội dung hoàn chỉnh.
 4. Chọn đường dẫn file TXT đầu ra (mặc định trong Documents/AutoScript), rồi nhấn **Bắt đầu**. Ứng dụng tự lập outline, học văn phong, viết các phần, tạo bài học nội bộ, rà soát toàn truyện, kiểm tra bằng Python và lưu kết quả. **Không cần duyệt hay nhấn tiếp giữa các bước.**
 5. Khi hoàn tất, nhấn **Mở thư mục kết quả**. Chỉ xuất **một file TXT kịch bản hoàn chỉnh**, không tiêu đề, metadata hoặc bài học riêng. Bài học và hồ sơ quản lý vẫn nằm trong thư mục làm việc nội bộ; bài học không tính vào độ dài truyện.
 
@@ -66,7 +80,7 @@ Theo yêu cầu mới, các điểm dừng xin duyệt trong skill được thay
 
 Ứng dụng thực sự chạy `Resources/validate_script.py` bằng Python cho bản gốc, từng phần, bài học và bản cuối. Số từ là `len(text.split())`, không phải đếm token hoặc ước lượng của AI. Ký tự dùng `len(text)` (Unicode code points); newline đọc thành LF. Bản gốc đếm toàn bộ văn bản, bản truyện theo quy chuẩn skill bỏ newline ngoài cùng trước kiểm tra.
 
-Kiểm tra chặn: dòng trắng, khoảng trắng đầu/cuối dòng, chữ số, ký tự cấm, từ rút gọn phổ biến, từ viết tắt trong danh sách skill, đoạn quá 110 từ, gạch nối đứng riêng, dấu ba chấm và độ dài. JSON không hợp lệ hoặc phản hồi bị cắt/bị chặn không được nhận. Khi không đạt, yêu cầu AI sửa, tối đa ba lượt; hết lượt thì báo lỗi, giữ các bước hoàn tất để tiếp tục.
+Kiểm tra chặn: dòng trắng, khoảng trắng đầu/cuối dòng, chữ số, ký tự cấm, từ rút gọn phổ biến, từ viết tắt trong danh sách skill, đoạn quá 110 từ, gạch nối đứng riêng, dấu ba chấm và độ dài tối thiểu. Phần dài hơn kế hoạch chỉ được cảnh báo, không bắt viết lại. JSON không hợp lệ hoặc phản hồi bị cắt/bị chặn không được nhận. Khi không đạt, yêu cầu AI sửa, tối đa ba lượt; hết lượt thì báo lỗi, giữ các bước hoàn tất để tiếp tục.
 
 K13 được đưa đầy đủ vào system prompt; Gemini phải tự rà soát nội dung và cập nhật Story Bible cùng narrative audit. **AI tự rà soát không phải bảo đảm logic, tính nguyên bản hoặc chất lượng nghệ thuật**. Bạn nên đọc bản cuối; kiểm tra Python chỉ xác nhận các quy tắc kỹ thuật đã lập trình. Không cam kết retention hay điểm chất lượng.
 

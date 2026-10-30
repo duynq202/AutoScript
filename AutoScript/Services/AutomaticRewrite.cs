@@ -7,6 +7,7 @@ public static class AutomaticRewrite
     public static async Task<Counts> RunToFileAsync(RewriteSession session, string key, string model,
         string outputPath, IProgress<string>? progress, CancellationToken ct)
     {
+        if (session.Current.Length == 0) await session.PrepareAsync(key, model, ct);
         while (session.Stage != Stage.Complete || session.Current.Length == 0)
         {
             ct.ThrowIfCancellationRequested();
