@@ -79,6 +79,35 @@ try {
         catch (OperationCanceledException) { }
     }
     Console.WriteLine("PASS: infinite Gemini HTTP timeout, delayed response remains pending, explicit cancellation, exact local concatenation and audit cannot replace script.");
+    using (var streaming = new StreamingHandler())
+    using (var live = new GeminiClient(new HttpClient(streaming))) {
+        var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        live.Transfer += value => { if (value.Characters > 0) received.TrySetResult(); };
+        var response = live.GenerateAsync("fake-key", "fake-model", "", "", default);
+        streaming.Write(new { candidates = new[] { new { content = new { parts = new[] { new { text = "hidden thought", thought = true } } } } } });
+        streaming.Write(new { candidates = new[] { new { content = new { parts = new[] { new { text = "hello " } } } } } });
+        await received.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        Check(!response.IsCompleted, "Streaming request ended before final packet");
+        streaming.Write(new { candidates = new[] { new { finishReason = "STOP", content = new { parts = new[] { new { text = "world" } } } } } });
+        Check(await response.WaitAsync(TimeSpan.FromSeconds(3)) == "hello world", "Streaming lost chunks, included thinking or waited for EOF after STOP");
+    }
+    using (var streaming = new StreamingHandler())
+    using (var live = new GeminiClient(new HttpClient(streaming)))
+    using (var stop = new CancellationTokenSource()) {
+        var response = live.GenerateAsync("fake-key", "fake-model", "", "", stop.Token);
+        stop.Cancel();
+        try { await response; throw new Exception("Streaming cancellation ignored"); }
+        catch (OperationCanceledException) { }
+    }
+    using (var streaming = new StreamingHandler())
+    using (var live = new GeminiClient(new HttpClient(streaming))) {
+        var response = live.GenerateAsync("fake-key", "fake-model", "", "", default);
+        streaming.Write(new { candidates = new[] { new { content = new { parts = new[] { new { text = "incomplete" } } } } } });
+        streaming.Stream.End();
+        try { await response; throw new Exception("Incomplete stream accepted"); }
+        catch (InvalidOperationException) { }
+    }
+    Console.WriteLine("PASS: incremental SSE progress before completion, excludes thought content, STOP without EOF, cancellation while waiting, rejects incomplete streams.");
     handler.Truncated = true;
     try { await client.GenerateAsync("fake-key", "fake-model", "", "", default); throw new Exception("Truncated response accepted"); }
     catch (InvalidOperationException) { }
@@ -101,12 +130,23 @@ sealed class FakeHandler : HttpMessageHandler
         var body = await request.Content!.ReadAsStringAsync(ct);
         using var doc = JsonDocument.Parse(body);
         var task = doc.RootElement.GetProperty("contents")[0].GetProperty("parts")[0].GetProperty("text").GetString()!;
+        if (task.StartsWith("Step three")) {
+            var marker = "INPUT DATA:\n";
+            var input = task[(task.IndexOf(marker, StringComparison.Ordinal) + marker.Length)..].Split('\n')[0];
+            using var context = JsonDocument.Parse(input);
+            if (context.RootElement.GetProperty("source").GetString() != "" || context.RootElement.GetProperty("reference").GetString() != "")
+                throw new Exception("Part generation resent full source/reference unnecessarily");
+            if (context.RootElement.GetProperty("approvedParts").GetArrayLength() > 1) throw new Exception("Part generation context grows with entire story");
+        }
         var isFinal = task.StartsWith("Step four final");
         var prose = string.Join("\n", Enumerable.Range(0, isFinal ? 30 : 10).Select(_ => string.Join(" ", Enumerable.Repeat("story", 20))));
         bool needsRepair = isFinal && RepairFinalRemaining-- > 0;
         object[] repairs = needsRepair ? new object[] { new { part = 2, text = string.Join("\n", Enumerable.Repeat(string.Join(" ", Enumerable.Repeat("repaired", 20)), 10)) } } : Array.Empty<object>();
         var payload = JsonSerializer.Serialize(new { text = Invalid ? "Bad 123" : isFinal ? "This is only review metadata." : prose, bible = "Bible", audit = "Audit", contentPass = !needsRepair, problems = needsRepair ? new[] { "Repair the second part" } : Array.Empty<string>(), repairs, lesson = string.Join("\n", Enumerable.Repeat(string.Join(" ", Enumerable.Repeat("lesson", 20)), 10)) });
-        return Json(new { candidates = new[] { new { finishReason = Truncated ? "MAX_TOKENS" : "STOP", content = new { parts = new[] { new { text = payload } } } } } });
+        if (!request.RequestUri!.AbsoluteUri.Contains(":streamGenerateContent?alt=sse")) throw new Exception("Wrong Gemini streaming endpoint");
+        string first = JsonSerializer.Serialize(new { candidates = new[] { new { content = new { parts = new[] { new { text = payload[..(payload.Length / 2)] } } } } } });
+        string last = JsonSerializer.Serialize(new { candidates = new[] { new { finishReason = Truncated ? "MAX_TOKENS" : "STOP", content = new { parts = new[] { new { text = payload[(payload.Length / 2)..] } } } } } });
+        return new(HttpStatusCode.OK) { Content = new StringContent("data: " + first + "\n\ndata: " + last + "\n\n", Encoding.UTF8, "text/event-stream") };
     }
     private static HttpResponseMessage Json(object body) => new(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json") };
 }
@@ -119,4 +159,42 @@ sealed class DelayedHandler : HttpMessageHandler
         await Release.Task.WaitAsync(ct);
         return new(HttpStatusCode.OK) { Content = new StringContent("{\"candidates\":[{\"finishReason\":\"STOP\",\"content\":{\"parts\":[{\"text\":\"{}\"}]}}]}") };
     }
+}
+
+sealed class StreamingHandler : HttpMessageHandler
+{
+    public FeedStream Stream { get; } = new();
+    public void Write(object packet) => Stream.WritePacket("data: " + JsonSerializer.Serialize(packet) + "\n\n");
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+    {
+        var content = new StreamContent(Stream);
+        content.Headers.ContentType = new("text/event-stream");
+        return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = content });
+    }
+}
+sealed class FeedStream : Stream
+{
+    private readonly System.Threading.Channels.Channel<byte[]> queue = System.Threading.Channels.Channel.CreateUnbounded<byte[]>();
+    private byte[] current = []; private int offset;
+    public void WritePacket(string packet) => queue.Writer.TryWrite(Encoding.UTF8.GetBytes(packet));
+    public void End() => queue.Writer.TryComplete();
+    public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken ct = default)
+    {
+        while (offset == current.Length) {
+            if (!await queue.Reader.WaitToReadAsync(ct)) return 0;
+            if (!queue.Reader.TryRead(out var next)) continue;
+            current = next; offset = 0;
+        }
+        int size = Math.Min(buffer.Length, current.Length - offset);
+        current.AsMemory(offset, size).CopyTo(buffer); offset += size; return size;
+    }
+    public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken ct) => ReadAsync(buffer.AsMemory(offset, count), ct).AsTask();
+    public override bool CanRead => true; public override bool CanSeek => false; public override bool CanWrite => false;
+    public override long Length => throw new NotSupportedException();
+    public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+    public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+    public override void SetLength(long value) => throw new NotSupportedException();
+    public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    public override void Flush() { }
 }

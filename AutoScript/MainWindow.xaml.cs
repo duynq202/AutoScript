@@ -11,9 +11,44 @@ public partial class MainWindow : Window
     private CancellationTokenSource? running;
     private string? activeOutput;
     private bool outputReady;
+    private readonly System.Windows.Threading.DispatcherTimer ticker = new() { Interval = TimeSpan.FromSeconds(1) };
+    private readonly Stopwatch elapsed = new();
+    private string liveStep = "Đang xử lý", liveNetwork = "";
+    private DateTimeOffset? lastPacket;
+    private long lastTransferUi;
+    private int lastUiCharacters;
+    private void UpdateLiveStatus()
+    {
+        if (running == null) return;
+        var silence = lastPacket.HasValue ? $" · Không có gói mới: {(DateTimeOffset.UtcNow - lastPacket.Value).TotalSeconds:N0}s" : "";
+        var duration = $"{(int)elapsed.Elapsed.TotalHours:00}:{elapsed.Elapsed.Minutes:00}:{elapsed.Elapsed.Seconds:00}";
+        Status.Text = $"{liveStep} · {liveNetwork} · Tổng {duration}{silence} · Có thể Hủy, không tự ngắt vì chờ lâu.";
+    }
+    private void OnTransfer(GeminiTransfer value)
+    {
+        long now = Stopwatch.GetTimestamp();
+        if (value.Phase == "receiving" && lastUiCharacters > 0 && Stopwatch.GetElapsedTime(lastTransferUi, now).TotalMilliseconds < 250) return;
+        lastTransferUi = now; lastUiCharacters = value.Characters;
+        Dispatcher.BeginInvoke(new Action(() => {
+            if (running == null) return;
+            if (value.Phase == "sending") { lastPacket = DateTimeOffset.UtcNow; liveNetwork = "Đang chờ Gemini trả dữ liệu"; }
+            else if (value.Phase == "headers") { lastPacket = DateTimeOffset.UtcNow; liveNetwork = "Đã kết nối · Gemini đang xử lý"; }
+            else { lastPacket = DateTimeOffset.UtcNow; liveNetwork = value.Phase == "complete" ? $"Đã nhận xong {value.Characters:N0} ký tự" : $"Đã nhận {value.Characters:N0} ký tự · {value.Events:N0} gói"; }
+            UpdateLiveStatus();
+        }));
+    }
+    private void OnSessionProgress(string message)
+    {
+        Dispatcher.BeginInvoke(new Action(() => {
+            if (running == null) return;
+            liveStep = message; StageLabel.Text = message; UpdateLiveStatus();
+        }));
+    }
     public MainWindow()
     {
         InitializeComponent();
+        client.Transfer += OnTransfer;
+        ticker.Tick += (_, _) => UpdateLiveStatus();
         OutputPath.Text = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
             "AutoScript", $"full_script_{DateTime.Now:yyyyMMdd_HHmmss}.txt");
     }
@@ -23,6 +58,7 @@ public partial class MainWindow : Window
     {
         if (running != null) return;
         using var cts = new CancellationTokenSource(); running = cts;
+        elapsed.Restart(); liveStep = "Chuẩn bị"; liveNetwork = ""; lastPacket = null; ticker.Start();
         Inputs.IsEnabled = false; Retry.IsEnabled = OpenFolder.IsEnabled = false;
         Cancel.IsEnabled = true; Status.Text = "Đang xử lý… Không giới hạn thời gian chờ Gemini. Có thể bấm Hủy.";
         try { await action(cts.Token); }
@@ -30,7 +66,7 @@ public partial class MainWindow : Window
         catch (InvalidOperationException ex) { Status.Text = ex.Message; }
         catch (Exception) { Status.Text = "Không hoàn tất tác vụ. Kiểm tra mạng, quyền đọc ghi thư mục và cài đặt; sau đó thử tiếp tục."; }
         finally {
-            running = null; Inputs.IsEnabled = true; Cancel.IsEnabled = false;
+            ticker.Stop(); elapsed.Stop(); running = null; Inputs.IsEnabled = true; Cancel.IsEnabled = false;
             Retry.IsEnabled = session != null && !outputReady;
             OpenFolder.IsEnabled = outputReady;
         }
@@ -38,9 +74,9 @@ public partial class MainWindow : Window
     private async Task ProcessSession(string key, string model, CancellationToken ct)
     {
         Tabs.SelectedIndex = 1;
+        OpenWorkFolder.IsEnabled = session != null;
         var progress = new Progress<string>(message => {
-            StageLabel.Text = message;
-            Status.Text = message + " Tự chuyển bước; không giới hạn thời gian chờ Gemini.";
+            liveStep = message; StageLabel.Text = message; UpdateLiveStatus();
             Preview.Text = session?.Current ?? "";
         });
         var counts = await AutomaticRewrite.RunToFileAsync(session!, key, model, activeOutput!, progress, ct);
@@ -72,7 +108,8 @@ public partial class MainWindow : Window
             if (File.Exists(destination) && MessageBox.Show("File đầu ra đã tồn tại. Thay thế khi xử lý thành công?", "Lưu kết quả", MessageBoxButton.YesNo) != MessageBoxResult.Yes) return;
             var draft = new RewriteSession(client);
             await draft.InitializeAsync(Source.Text, Reference.Text, low, high, ct);
-            session = draft; activeOutput = destination; outputReady = false;
+            if (session != null) session.Progress -= OnSessionProgress;
+            session = draft; session.Progress += OnSessionProgress; activeOutput = destination; outputReady = false;
             await ProcessSession(key, model, ct);
         });
     }
@@ -90,6 +127,12 @@ public partial class MainWindow : Window
         if (activeOutput == null) return;
         try { Process.Start(new ProcessStartInfo("explorer.exe") { ArgumentList = { "/select,", activeOutput }, UseShellExecute = true }); }
         catch { Status.Text = $"File kết quả: {activeOutput}"; }
+    }
+    private void OpenWorkFolder_Click(object sender, RoutedEventArgs e)
+    {
+        if (session == null) return;
+        try { Process.Start(new ProcessStartInfo("explorer.exe") { ArgumentList = { session.DirectoryPath }, UseShellExecute = true }); }
+        catch { Status.Text = session.DirectoryPath; }
     }
     private void Cancel_Click(object sender, RoutedEventArgs e) => running?.Cancel();
     private async void OpenSource_Click(object sender, RoutedEventArgs e) => await OpenText(true);
@@ -109,5 +152,5 @@ public partial class MainWindow : Window
         if (running != null) { e.Cancel = true; running.Cancel(); Status.Text = "Đang hủy tác vụ. Đóng cửa sổ lại sau khi tác vụ dừng."; }
         base.OnClosing(e);
     }
-    protected override void OnClosed(EventArgs e) { ApiKey.Clear(); client.Dispose(); base.OnClosed(e); }
+    protected override void OnClosed(EventArgs e) { ticker.Stop(); client.Transfer -= OnTransfer; if (session != null) session.Progress -= OnSessionProgress; ApiKey.Clear(); client.Dispose(); base.OnClosed(e); }
 }

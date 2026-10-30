@@ -24,6 +24,16 @@ dotnet publish AutoScript/AutoScript.csproj -c Release -r win-x64 --self-contain
 
 Chạy `artifacts/AutoScript/AutoScript.exe`. Máy chạy bản phát hành cần **.NET 8 Desktop Runtime x64** và Python 3. Giữ nguyên thư mục `Resources` cạnh executable.
 
+## Bản sửa v1.1.2 — tiến độ viết thực và nhận theo luồng
+
+Dùng Gemini `streamGenerateContent?alt=sse`, nhận từng gói thay vì chờ toàn bộ phản hồi rồi mới cập nhật màn hình. Hiển thị bước/phần đang viết, lượt sửa, tổng thời gian, số ký tự/gói nhận được và số giây chưa nhận gói mới. Đây là tiến độ truyền dữ liệu, không phải số từ đã đạt kiểm tra; số từ chuẩn vẫn do Python xác minh khi phần hoàn tất. Không hiển thị suy nghĩ nội bộ của model.
+
+Giữ chế độ không đặt timeout Gemini; nút Hủy có thể ngắt cả khi đang chờ gói đầu tiên. Luồng kết thúc trước STOP, bị chặn hoặc lỗi mạng được báo rõ, không nhận phần dở dang. Nút **Mở thư mục làm việc / nhật ký** truy cập các `partN.txt` đã xong và `progress.log` (chỉ các bước/lượt và lỗi kiểm tra; không ghi API key, prompt hay toàn bộ phản hồi).
+
+Giảm dữ liệu gửi lặp: kịch bản gốc chỉ dùng khi lập outline, bản tham khảo dùng khi học Style Guide. Lúc viết từng phần dùng outline, Style Guide, Story Bible, narrative audit và phần gần nhất; rà soát cuối vẫn đọc toàn truyện. Mục tiêu là tránh gửi lại các đầu vào dài và toàn bộ các phần ở mỗi lần viết.
+
+Chưa xác nhận được nguyên nhân cụ thể trên máy người dùng hoặc kiểm thử bằng Gemini key thật. Bản sửa khắc phục việc chờ im không có tiến độ và giảm context dư thừa; nếu vẫn chờ, số gói nhận và nhật ký sẽ giúp phân biệt chờ API với vòng sửa định dạng/độ dài.
+
 ## Bản sửa v1.1.1 trên nền v1.1.0
 
 Không đặt timeout phía ứng dụng cho HTTP Gemini (`Timeout.InfiniteTimeSpan`). Tác vụ đang chờ không bị dừng sau năm phút như trước; chỉ nút Hủy/đóng ứng dụng hoặc lỗi thực tế từ mạng/API mới ngắt chờ. Máy chủ, proxy hoặc hệ điều hành vẫn có thể tự đóng kết nối; ứng dụng không thể bảo đảm phía dịch vụ giữ kết nối vô hạn. Giới hạn ngắn của tiến trình Python kiểm tra file không phải thời hạn sinh kịch bản Gemini.

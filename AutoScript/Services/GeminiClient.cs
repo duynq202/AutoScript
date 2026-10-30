@@ -3,37 +3,39 @@ using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 namespace AutoScript.Services;
+public sealed record GeminiTransfer(string Phase, int Characters, int Events);
 public sealed class GeminiClient : IDisposable
 {
     private readonly HttpClient http;
+    public event Action<GeminiTransfer>? Transfer;
     public GeminiClient(HttpClient? transport = null)
     {
         http = transport ?? new HttpClient();
         http.BaseAddress = new Uri("https://generativelanguage.googleapis.com/v1beta/");
-        // Generation may take arbitrarily long. Only caller cancellation stops waiting.
         http.Timeout = Timeout.InfiniteTimeSpan;
     }
-    private async Task<JsonDocument> SendAsync(HttpMethod method, string path, string key, object? body, CancellationToken ct)
+    private async Task<HttpResponseMessage> SendResponseAsync(HttpMethod method, string path, string key, object? body, CancellationToken ct)
     {
         using var req = new HttpRequestMessage(method, path);
         req.Headers.Add("x-goog-api-key", key);
         if (body != null) req.Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
-        using var res = await http.SendAsync(req, ct);
-        if (!res.IsSuccessStatusCode)
-            throw new InvalidOperationException(res.StatusCode switch {
-                HttpStatusCode.BadRequest => "Gemini từ chối yêu cầu. Kiểm tra model, kích thước đầu vào và quyền dùng model.",
-                HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden => "API key không hợp lệ hoặc chưa được cấp quyền Gemini.",
-                HttpStatusCode.TooManyRequests => "Đã hết quota hoặc bị giới hạn tốc độ. Chờ rồi thử lại.",
-                HttpStatusCode.NotFound => "Không tìm thấy model. Tải lại danh sách model.",
-                _ => $"Gemini gặp lỗi HTTP {(int)res.StatusCode}. Thử lại sau."
-            });
-        return JsonDocument.Parse(await res.Content.ReadAsStringAsync(ct));
+        var res = await http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
+        if (res.IsSuccessStatusCode) return res;
+        var code = res.StatusCode; res.Dispose();
+        throw new InvalidOperationException(code switch {
+            HttpStatusCode.BadRequest => "Gemini từ chối yêu cầu. Kiểm tra model, kích thước đầu vào và quyền dùng model.",
+            HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden => "API key không hợp lệ hoặc chưa được cấp quyền Gemini.",
+            HttpStatusCode.TooManyRequests => "Đã hết quota hoặc bị giới hạn tốc độ. Chờ rồi thử lại.",
+            HttpStatusCode.NotFound => "Không tìm thấy model. Tải lại danh sách model.",
+            _ => $"Gemini gặp lỗi HTTP {(int)code}. Thử lại sau."
+        });
     }
     public async Task<List<string>> ModelsAsync(string key, CancellationToken ct)
     {
         var result = new List<string>(); string? token = null;
         do {
-            using var doc = await SendAsync(HttpMethod.Get, "models?pageSize=100" + (token == null ? "" : "&pageToken=" + Uri.EscapeDataString(token)), key, null, ct);
+            using var res = await SendResponseAsync(HttpMethod.Get, "models?pageSize=100" + (token == null ? "" : "&pageToken=" + Uri.EscapeDataString(token)), key, null, ct);
+            using var doc = JsonDocument.Parse(await res.Content.ReadAsStringAsync(ct));
             if (doc.RootElement.TryGetProperty("models", out var models))
                 foreach (var m in models.EnumerateArray())
                     if (m.TryGetProperty("supportedGenerationMethods", out var methods) && methods.EnumerateArray().Any(x => x.GetString() == "generateContent"))
@@ -45,21 +47,67 @@ public sealed class GeminiClient : IDisposable
     public async Task<string> GenerateAsync(string key, string model, string system, string prompt, CancellationToken ct)
     {
         if (!System.Text.RegularExpressions.Regex.IsMatch(model, @"^[a-zA-Z0-9._-]+$")) throw new InvalidOperationException("Model ID không hợp lệ.");
-        using var doc = await SendAsync(HttpMethod.Post, $"models/{model}:generateContent", key, new {
-            systemInstruction = new { parts = new[] { new { text = system } } },
-            contents = new[] { new { role = "user", parts = new[] { new { text = prompt } } } },
-            generationConfig = new { responseMimeType = "application/json" }
-        }, ct);
-        if (!doc.RootElement.TryGetProperty("candidates", out var candidates) || candidates.GetArrayLength() == 0)
-            throw new InvalidOperationException("Gemini không trả nội dung; yêu cầu có thể bị bộ lọc chặn.");
-        var candidate = candidates[0];
-        if (!candidate.TryGetProperty("finishReason", out var finish) || finish.GetString() != "STOP")
-            throw new InvalidOperationException("Phản hồi bị cắt hoặc bị chặn. Không lưu nội dung chưa hoàn chỉnh; hãy thử lại hoặc đổi model.");
-        var text = string.Concat(candidate.GetProperty("content").GetProperty("parts").EnumerateArray()
-            .Where(x => !x.TryGetProperty("thought", out var thought) || !thought.GetBoolean())
-            .Where(x => x.TryGetProperty("text", out _)).Select(x => x.GetProperty("text").GetString()));
-        if (string.IsNullOrWhiteSpace(text)) throw new InvalidOperationException("Gemini trả nội dung trống.");
-        return text;
+        var text = new StringBuilder(); int packets = 0; string? finishReason = null;
+        bool Packet(string json)
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            if (root.TryGetProperty("error", out _)) throw new InvalidOperationException("Gemini trả lỗi trong luồng. Các phần đã hoàn tất vẫn được giữ; có thể thử tiếp tục.");
+            packets++;
+            if (root.TryGetProperty("candidates", out var candidates) && candidates.GetArrayLength() > 0) {
+                var candidate = candidates[0];
+                if (candidate.TryGetProperty("content", out var content) && content.TryGetProperty("parts", out var parts))
+                    foreach (var part in parts.EnumerateArray()) {
+                        if (part.TryGetProperty("thought", out var thought) && thought.ValueKind == JsonValueKind.True) continue;
+                        if (part.TryGetProperty("text", out var value)) text.Append(value.GetString());
+                    }
+                if (candidate.TryGetProperty("finishReason", out var finish)) finishReason = finish.GetString();
+            }
+            else if (root.TryGetProperty("promptFeedback", out var feedback) && feedback.TryGetProperty("blockReason", out _))
+                throw new InvalidOperationException("Gemini chặn yêu cầu. Không có phần kịch bản nào được nhận từ yêu cầu này.");
+            Transfer?.Invoke(new("receiving", text.Length, packets));
+            return finishReason != null;
+        }
+        Transfer?.Invoke(new("sending", 0, 0));
+        try {
+            using var res = await SendResponseAsync(HttpMethod.Post, $"models/{model}:streamGenerateContent?alt=sse", key, new {
+                systemInstruction = new { parts = new[] { new { text = system } } },
+                contents = new[] { new { role = "user", parts = new[] { new { text = prompt } } } },
+                generationConfig = new { responseMimeType = "application/json" }
+            }, ct);
+            Transfer?.Invoke(new("headers", 0, 0));
+            if (res.Content.Headers.ContentType?.MediaType == "text/event-stream") {
+                await using var stream = await res.Content.ReadAsStreamAsync(ct);
+                using var reader = new StreamReader(stream, Encoding.UTF8);
+                var data = new StringBuilder(); string? line;
+                while ((line = await reader.ReadLineAsync(ct)) != null) {
+                    if (line.StartsWith("data:", StringComparison.Ordinal)) {
+                        if (data.Length > 0) data.Append('\n');
+                        data.Append(line[5..].TrimStart());
+                    }
+                    else if (line.Length == 0 && data.Length > 0) {
+                        var packet = data.ToString(); data.Clear();
+                        if (packet == "[DONE]") break;
+                        if (Packet(packet)) break;
+                    }
+                }
+                if (finishReason == null && data.Length > 0 && data.ToString() != "[DONE]") Packet(data.ToString());
+            }
+            else {
+                // JSON responses are accepted for compatible proxies and local test transports.
+                Packet(await res.Content.ReadAsStringAsync(ct));
+            }
+            if (finishReason != "STOP") throw new InvalidOperationException(finishReason == null
+                ? $"Luồng Gemini kết thúc khi chưa đủ phản hồi ({text.Length:N0} ký tự). Phần đang dở chưa được nhận; nhấn tiếp tục để thử lại."
+                : $"Gemini kết thúc với {finishReason}; phần đang dở bị cắt hoặc bị chặn. Các phần trước vẫn được giữ.");
+            if (string.IsNullOrWhiteSpace(text.ToString())) throw new InvalidOperationException("Gemini trả nội dung trống.");
+            Transfer?.Invoke(new("complete", text.Length, packets));
+            return text.ToString();
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException) {
+            throw new InvalidOperationException($"Kết nối Gemini bị gián đoạn sau {text.Length:N0} ký tự. Các phần hoàn tất vẫn được giữ; nhấn tiếp tục để thử lại.");
+        }
+        catch (JsonException) { throw new InvalidOperationException("Gemini trả gói dữ liệu không hợp lệ. Phần đang dở chưa được nhận; có thể thử tiếp tục."); }
     }
     public void Dispose() => http.Dispose();
 }

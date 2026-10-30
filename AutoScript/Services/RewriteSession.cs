@@ -11,6 +11,13 @@ public sealed class RewriteSession
     public int PartNumber => parts.Count + (Stage == Stage.Part ? 1 : 0);
     public int PartCount { get; private set; }
     public int Target { get; private set; }
+    public event Action<string>? Progress;
+    private void Report(string message)
+    {
+        Progress?.Invoke(message);
+        try { File.AppendAllText(Path.Combine(DirectoryPath, "progress.log"), DateTimeOffset.UtcNow.ToString("O") + " " + message + "\n"); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+    }
     public string FullScript { get; private set; } = "";
     public string Lesson { get; private set; } = "";
     private string source = "", reference = "", outline = "", style = "", bible = "", audit = "", skill = "";
@@ -74,14 +81,16 @@ public sealed class RewriteSession
             Stage.Lesson => "Step four first segment. Write ONLY a lesson of one hundred eighty to two hundred twenty words, tied to a concrete story moment and its prop. text=lesson prose only, bible=complete bible, audit=complete audit. Perform K13 content review.",
             _ => throw new InvalidOperationException("Bước không hợp lệ.")
         };
-        string context = JsonSerializer.Serialize(new { source, reference, outline = nextOutline, style = nextStyle, bible, audit, approvedParts = accepted, previousDraft = next ? "" : Current, lesson = Lesson, feedback });
+        string context = JsonSerializer.Serialize(new { source = desired == Stage.Outline ? source : "", reference = desired == Stage.Style ? reference : "", outline = nextOutline, style = nextStyle, bible, audit, approvedParts = desired == Stage.Part ? accepted.TakeLast(1).ToList() : accepted, previousDraft = next ? "" : Current, lesson = Lesson, feedback });
         string repair = "";
         for (int attempt = 0; attempt < 3; attempt++)
         {
+            Report($"{(desired == Stage.Part ? $"Viết phần {index}/{PartCount}, mục tiêu {low}–{high} từ" : desired.ToString())} · Lượt {attempt + 1}/3: chờ Gemini");
             var response = await gemini.GenerateAsync(key, model, system, task + "\nReturn JSON {text:string,bible:string,audit:string,contentPass:boolean,problems:string[],lesson:string}.\nINPUT DATA:\n" + context + "\n" + repair, ct);
+            Report("Đã nhận đủ phản hồi · đang phân tích JSON và kiểm tra nội dung");
             JsonDocument doc;
             try { doc = JsonDocument.Parse(response); }
-            catch (JsonException) { repair = "Previous response was not valid JSON. Return the exact JSON contract."; continue; }
+            catch (JsonException) { Report("JSON chưa hợp lệ · tự yêu cầu sửa lại"); repair = "Previous response was not valid JSON. Return the exact JSON contract."; continue; }
             using (doc) {
                 var root = doc.RootElement;
                 string Get(string name) => root.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString()! : "";
@@ -102,7 +111,7 @@ public sealed class RewriteSession
                         if (lc.Words < 180 || lc.Words > 220) failures.Add("Lesson must be 180–220 words");
                     }
                 }
-                if (failures.Count > 0) { repair = "Repair this rejected response: " + response + "\nVALIDATION ERRORS: " + string.Join("; ", failures); continue; }
+                if (failures.Count > 0) { Report("Kiểm tra chưa đạt · " + string.Join("; ", failures) + " · đang yêu cầu sửa"); repair = "Repair this rejected response: " + response + "\nVALIDATION ERRORS: " + string.Join("; ", failures); continue; }
                 // Persist validated artifacts before exposing the new draft to the UI.
                 string file = desired switch { Stage.Outline => "outline.md", Stage.Style => "style_guide.md", Stage.Part => $"part{index}.txt", Stage.Lesson => "lesson.txt", _ => "full_script.txt" };
                 await Write(Path.Combine(DirectoryPath, file), text, ct);
@@ -113,6 +122,7 @@ public sealed class RewriteSession
                 bible = newBible; audit = newAudit; Current = text; Stage = desired;
                 if (desired == Stage.Lesson) Lesson = text;
                 if (desired == Stage.Complete) { FullScript = text; Lesson = lesson; }
+                Report($"Đã lưu {file} · tự chuyển bước tiếp theo");
                 return;
             }
         }
@@ -143,7 +153,9 @@ public sealed class RewriteSession
                 "Use the skill formatting rules for replacement prose. No code fences.\nINPUT DATA:\n" +
                 JsonSerializer.Serialize(new { outline, style, bible = finalBible, audit = finalAudit, parts = completed, lesson = Lesson, originalWordCounts = originalCounts }) +
                 "\n" + correction;
+            Report($"Rà soát toàn truyện · lượt {attempt + 1}/3: chờ Gemini");
             var response = await gemini.GenerateAsync(key, model, system, prompt, ct);
+            Report("Đã nhận đủ phản hồi · đang phân tích JSON và kiểm tra nội dung");
             JsonDocument doc;
             try { doc = JsonDocument.Parse(response); }
             catch (JsonException) { correction = "Return a valid JSON audit matching the requested contract."; continue; }
