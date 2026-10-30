@@ -34,6 +34,28 @@ try {
     Check(session.Stage == Stage.Complete, "Final stage failed");
     Check((await session.CountText(session.FullScript, default)).Words == 600, "Final exact count failed");
     Check(File.Exists(Path.Combine(session.DirectoryPath, "story_bible.md")), "Bible not persisted");
+    var automatic = new RewriteSession(client);
+    try {
+        await automatic.InitializeAsync(Prose(600), "Reference sample.", 600, 600, default);
+        var output = Path.Combine(automatic.DirectoryPath, "export", "result.txt");
+        Directory.CreateDirectory(Path.GetDirectoryName(output)!);
+        await File.WriteAllTextAsync(output, "existing result");
+        handler.Invalid = true;
+        try { await AutomaticRewrite.RunToFileAsync(automatic, "fake-key", "fake-model", output, null, default); throw new Exception("Expected automatic validation failure"); }
+        catch (InvalidOperationException) { }
+        Check(await File.ReadAllTextAsync(output) == "existing result", "Failed automatic run replaced previous file");
+        Check(automatic.Stage == Stage.Style, "Automatic failure lost completed stages");
+        handler.Invalid = false;
+        var result = await AutomaticRewrite.RunToFileAsync(automatic, "fake-key", "fake-model", output, null, default);
+        Check(result.Words == 600 && automatic.Stage == Stage.Complete, "Automatic resume did not finish");
+        Check(await File.ReadAllTextAsync(output) == automatic.FullScript, "Export differs from final script");
+        Check(Directory.GetFiles(Path.GetDirectoryName(output)!).Length == 1, "Automatic run exported more than one file");
+        using var cancelled = new CancellationTokenSource(); cancelled.Cancel();
+        try { await AutomaticRewrite.RunToFileAsync(automatic, "fake-key", "fake-model", output, null, cancelled.Token); throw new Exception("Expected cancellation"); }
+        catch (OperationCanceledException) { }
+        Check(await File.ReadAllTextAsync(output) == automatic.FullScript, "Cancellation damaged final output");
+        Console.WriteLine("PASS: automatic one-click workflow, single TXT export, validation failure preserves old output, resume from failed step, cancellation.");
+    } finally { if (Directory.Exists(automatic.DirectoryPath)) Directory.Delete(automatic.DirectoryPath, true); }
     handler.Truncated = true;
     try { await client.GenerateAsync("fake-key", "fake-model", "", "", default); throw new Exception("Truncated response accepted"); }
     catch (InvalidOperationException) { }

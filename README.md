@@ -1,6 +1,6 @@
 # AutoScript — WPF + Gemini
 
-Ứng dụng Windows viết lại kịch bản theo file `rewrite-script_SKILL.md` đính kèm. Nhập Gemini API key, chọn model, nhập kịch bản gốc, khoảng số từ mong muốn và kịch bản tham khảo. Xuất kịch bản TXT UTF-8 và bài học riêng.
+Ứng dụng Windows viết lại kịch bản theo file `rewrite-script_SKILL.md` đính kèm. Nhập Gemini API key, chọn model, nhập kịch bản gốc, khoảng số từ mong muốn và kịch bản tham khảo. Tự xử lý một mạch và xuất duy nhất một file kịch bản TXT UTF-8.
 
 ## Tải bản đầy đủ
 
@@ -24,23 +24,25 @@ dotnet publish AutoScript/AutoScript.csproj -c Release -r win-x64 --self-contain
 
 Chạy `artifacts/AutoScript/AutoScript.exe`. Máy chạy bản phát hành cần **.NET 8 Desktop Runtime x64** và Python 3. Giữ nguyên thư mục `Resources` cạnh executable.
 
-## Sử dụng
+## Sử dụng — phiên bản tự động
 
-1. Nhập API key; nhấn **Tải model**, chọn model hỗ trợ `generateContent`. Cũng có thể nhập model ID thủ công. Danh sách phụ thuộc API và quyền của key; một model được liệt kê vẫn có thể chưa có quota.
-2. Dán kịch bản gốc và bản tham khảo hoặc mở TXT UTF-8. Bản đầu hỗ trợ TXT và văn bản dán, chưa trích xuất DOCX/PDF/SRT.
-3. Nhập cả hai mốc số từ hoặc để trống cả hai để dùng số từ bản gốc. Mục tiêu là trung điểm khoảng. Giới hạn hiện tại: 600–60.000 từ. Ít nhất ba phần, khoảng 1.500 từ/phần; kiểm tra ±10% từng phần, tổng nằm trong cả khoảng nhập và ±5% mục tiêu. Bài học 180–220 từ không tính trong độ dài kịch bản.
-4. **Bắt đầu**, đọc và duyệt outline. Nhấn **Duyệt và tiếp tục** để tạo Style Guide; duyệt lần nữa để viết phần một. Mỗi lượt chỉ viết một phần, chờ bạn duyệt. Có thể nhập góp ý và tạo lại bước hiện tại.
-5. Sau phần cuối, duyệt để tạo bài học, sau đó duyệt để rà soát toàn truyện. Đọc bản cuối và nhấn **Xuất file TXT**. Kết quả: tên file bạn chọn và `<tên>_lesson.txt`. File truyện không chứa tiêu đề, metadata hoặc bài học.
+1. Nhập API key; nhấn **Tải model**, chọn model có quota hoặc nhập model ID.
+2. Dán kịch bản gốc và bản tham khảo hoặc mở TXT UTF-8. Chưa trích xuất DOCX/PDF/SRT.
+3. Nhập khoảng số từ hoặc để trống cả hai mốc để dùng số từ bản gốc. Mục tiêu là trung điểm khoảng, từ 600–60.000 từ. Ít nhất ba phần; kiểm tra ±10% từng phần, tổng nằm trong khoảng nhập và ±5% mục tiêu.
+4. Chọn đường dẫn file TXT đầu ra (mặc định trong Documents/AutoScript), rồi nhấn **Bắt đầu**. Ứng dụng tự lập outline, học văn phong, viết các phần, tạo bài học nội bộ, rà soát toàn truyện, kiểm tra bằng Python và lưu kết quả. **Không cần duyệt hay nhấn tiếp giữa các bước.**
+5. Khi hoàn tất, nhấn **Mở thư mục kết quả**. Chỉ xuất **một file TXT kịch bản hoàn chỉnh**, không tiêu đề, metadata hoặc bài học riêng. Bài học và hồ sơ quản lý vẫn nằm trong thư mục làm việc nội bộ; bài học không tính vào độ dài truyện.
 
-Theo skill, **kịch bản đầu ra là tiếng Anh Mỹ**, sáng tạo tuyến truyện mới từ mô típ trừu tượng; bản tham khảo chỉ dùng để học đặc điểm văn phong chung. Thay đổi ở tab đầu vào sau khi bắt đầu không thay đổi dữ liệu dự án hiện tại; hãy bắt đầu dự án mới để dùng đầu vào hoặc độ dài mới. Key và model có thể đổi giữa các lượt.
+Nếu mất mạng, hết quota hoặc kiểm tra không đạt sau các lượt sửa tự động, ứng dụng báo lỗi. Khắc phục rồi nhấn **Tiếp tục tác vụ bị gián đoạn** để chạy lại bước đang dở; không viết lại các bước đã hoàn tất. Hủy không tạo file đầu ra dở dang. File đầu ra cũ chỉ bị thay thế sau khi bản mới hoàn tất.
+
+Theo yêu cầu mới, các điểm dừng xin duyệt trong skill được thay bằng tự động chuyển bước; các quy tắc sáng tạo, K1–K13, Story Bible, narrative audit và Python vẫn áp dụng. **Kịch bản đầu ra là tiếng Anh Mỹ**. Thay đổi đầu vào hoặc độ dài chỉ áp dụng khi bắt đầu dự án mới. API key và model có thể đổi trước khi tiếp tục tác vụ lỗi.
 
 ## Đếm và kiểm tra
 
 Ứng dụng thực sự chạy `Resources/validate_script.py` bằng Python cho bản gốc, từng phần, bài học và bản cuối. Số từ là `len(text.split())`, không phải đếm token hoặc ước lượng của AI. Ký tự dùng `len(text)` (Unicode code points); newline đọc thành LF. Bản gốc đếm toàn bộ văn bản, bản truyện theo quy chuẩn skill bỏ newline ngoài cùng trước kiểm tra.
 
-Kiểm tra chặn: dòng trắng, khoảng trắng đầu/cuối dòng, chữ số, ký tự cấm, từ rút gọn phổ biến, từ viết tắt trong danh sách skill, đoạn quá 110 từ, gạch nối đứng riêng, dấu ba chấm và độ dài. JSON không hợp lệ hoặc phản hồi bị cắt/bị chặn không được nhận. Khi không đạt, yêu cầu AI sửa, tối đa ba lượt; hết lượt thì báo lỗi, giữ bước duyệt trước để thử lại.
+Kiểm tra chặn: dòng trắng, khoảng trắng đầu/cuối dòng, chữ số, ký tự cấm, từ rút gọn phổ biến, từ viết tắt trong danh sách skill, đoạn quá 110 từ, gạch nối đứng riêng, dấu ba chấm và độ dài. JSON không hợp lệ hoặc phản hồi bị cắt/bị chặn không được nhận. Khi không đạt, yêu cầu AI sửa, tối đa ba lượt; hết lượt thì báo lỗi, giữ các bước hoàn tất để tiếp tục.
 
-K13 được đưa đầy đủ vào system prompt; Gemini phải tự rà soát nội dung và cập nhật Story Bible cùng narrative audit. **AI tự rà soát không phải bảo đảm logic, tính nguyên bản hoặc chất lượng nghệ thuật**. Bạn cần đọc duyệt; kiểm tra Python chỉ xác nhận các quy tắc kỹ thuật đã lập trình. Không cam kết retention hay điểm chất lượng.
+K13 được đưa đầy đủ vào system prompt; Gemini phải tự rà soát nội dung và cập nhật Story Bible cùng narrative audit. **AI tự rà soát không phải bảo đảm logic, tính nguyên bản hoặc chất lượng nghệ thuật**. Bạn nên đọc bản cuối; kiểm tra Python chỉ xác nhận các quy tắc kỹ thuật đã lập trình. Không cam kết retention hay điểm chất lượng.
 
 ## Dữ liệu và giới hạn
 
@@ -60,4 +62,4 @@ dotnet run --project tests/CoreChecks/CoreChecks.csproj
 dotnet build AutoScript/AutoScript.csproj -c Release
 ```
 
-CoreChecks dùng HTTP giả lập, chạy Python thật: lọc model, header API key, lỗi HTTP không tiến bước, từ chối phần sai kiểm tra, tiến trình duyệt tới xuất bản cuối, đếm chính xác và từ chối phản hồi bị cắt. Không gọi Gemini thật. Cần kiểm thử thủ công giao diện trên Windows và một lượt Gemini với key thật trước khi sử dụng chính thức.
+CoreChecks dùng HTTP giả lập, chạy Python thật: lọc model, header API key, lỗi HTTP không tiến bước, từ chối phần sai kiểm tra, tiến trình tự động tới xuất bản cuối, đếm chính xác và từ chối phản hồi bị cắt. Không gọi Gemini thật. Cần kiểm thử thủ công giao diện trên Windows và một lượt Gemini với key thật trước khi sử dụng chính thức.
