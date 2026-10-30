@@ -24,6 +24,14 @@ dotnet publish AutoScript/AutoScript.csproj -c Release -r win-x64 --self-contain
 
 Chạy `artifacts/AutoScript/AutoScript.exe`. Máy chạy bản phát hành cần **.NET 8 Desktop Runtime x64** và Python 3. Giữ nguyên thư mục `Resources` cạnh executable.
 
+## Bản sửa v1.1.3 — tự phục hồi HTTP 503
+
+Lỗi 503 nghĩa là Gemini hoặc máy chủ trung gian tạm thời không phục vụ được yêu cầu; không đồng nghĩa key sai. Tự thử lại phần đang xử lý khi gặp HTTP 408/500/502/503/504, kể cả lỗi 503 nằm trong luồng SSE. Chờ giãn cách khoảng 5, 10, 20, 40 rồi 60 giây (thêm một chút ngẫu nhiên); nếu máy chủ yêu cầu Retry-After lâu hơn thì chờ đủ. Hiển thị mã lỗi, số lần thử và đếm ngược.
+
+Không giới hạn số lần retry cho các mã tạm thời này; có thể bấm Hủy cả trong lúc đếm ngược. Không đặt timeout tổng cho Gemini. Phần đã hoàn tất được giữ, chỉ gửi lại yêu cầu của phần đang dở, không nối nội dung dở dang của lần lỗi vào phần mới. Nếu quá tải kéo dài, có thể Hủy, chọn model khác rồi Tiếp tục. Mỗi yêu cầu thử lại có thể ảnh hưởng quota/chi phí theo chính sách nhà cung cấp.
+
+Không tự retry 400/401/403/404 hoặc 429 vì cần xử lý input/quyền/model/quota. Lỗi mạng, dữ liệu bị cắt, không đạt kiểm tra kỹ thuật/nội dung vẫn được báo riêng; retry dịch vụ không bỏ qua các kiểm tra này.
+
 ## Bản sửa v1.1.2 — tiến độ viết thực và nhận theo luồng
 
 Dùng Gemini `streamGenerateContent?alt=sse`, nhận từng gói thay vì chờ toàn bộ phản hồi rồi mới cập nhật màn hình. Hiển thị bước/phần đang viết, lượt sửa, tổng thời gian, số ký tự/gói nhận được và số giây chưa nhận gói mới. Đây là tiến độ truyền dữ liệu, không phải số từ đã đạt kiểm tra; số từ chuẩn vẫn do Python xác minh khi phần hoàn tất. Không hiển thị suy nghĩ nội bộ của model.

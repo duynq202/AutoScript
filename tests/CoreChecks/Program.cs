@@ -108,6 +108,47 @@ try {
         catch (InvalidOperationException) { }
     }
     Console.WriteLine("PASS: incremental SSE progress before completion, excludes thought content, STOP without EOF, cancellation while waiting, rejects incomplete streams.");
+    using (var transient = new RetryHandler(Enumerable.Range(0, 7).Select(i => (Func<HttpResponseMessage>)(() => {
+        var unavailable = new HttpResponseMessage(HttpStatusCode.ServiceUnavailable);
+        if (i == 0) unavailable.Headers.RetryAfter = new(TimeSpan.FromSeconds(120));
+        return unavailable;
+    })).Append(() => RetryHandler.Success("recovered"))))
+    {
+        double delayedSeconds = 0; int retries = 0;
+        using var recover = new GeminiClient(new HttpClient(transient), (duration, token) => { token.ThrowIfCancellationRequested(); delayedSeconds += duration.TotalSeconds; return Task.CompletedTask; });
+        recover.Transfer += update => { if (update.Phase == "retry") retries++; };
+        Check(await recover.GenerateAsync("fake-key", "fake-model", "system", "same prompt", default) == "recovered", "503 recovery failed");
+        Check(transient.Calls == 8, "Transient service overload stopped after a fixed attempt count");
+        Check(delayedSeconds >= 120 && retries > 0, "Retry-After/backoff/progress ignored");
+        Check(transient.Bodies.Distinct().Count() == 1, "Retry changed the current part prompt");
+    }
+    using (var transient = new RetryHandler(new Func<HttpResponseMessage>[] {
+        () => new(HttpStatusCode.OK) { Content = new StringContent("data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"discarded\"}]}}]}\n\ndata: {\"error\":{\"code\":503,\"status\":\"UNAVAILABLE\"}}\n\n", Encoding.UTF8, "text/event-stream") },
+        () => RetryHandler.Success("recovered")
+    }))
+    using (var recover = new GeminiClient(new HttpClient(transient), (_, token) => { token.ThrowIfCancellationRequested(); return Task.CompletedTask; })) {
+        Check(await recover.GenerateAsync("fake-key", "fake-model", "", "", default) == "recovered", "SSE 503 did not recover or concatenated rejected partial output");
+        Check(transient.Calls == 2, "SSE 503 attempt count wrong");
+    }
+    foreach (var status in new[] { HttpStatusCode.BadRequest, HttpStatusCode.Unauthorized, HttpStatusCode.Forbidden, HttpStatusCode.NotFound, HttpStatusCode.TooManyRequests }) {
+        using var permanent = new RetryHandler(new Func<HttpResponseMessage>[] { () => new(status) });
+        using var noRetry = new GeminiClient(new HttpClient(permanent), (_, _) => throw new Exception("Retried permanent/quota error"));
+        try { await noRetry.GenerateAsync("fake-key", "fake-model", "", "", default); throw new Exception("Permanent error accepted"); }
+        catch (InvalidOperationException) { }
+        Check(permanent.Calls == 1, "Permanent error request repeated");
+    }
+    using (var transient = new RetryHandler(new Func<HttpResponseMessage>[] { () => new(HttpStatusCode.ServiceUnavailable) }))
+    using (var stopRetry = new CancellationTokenSource())
+    using (var recover = new GeminiClient(new HttpClient(transient), (_, token) => Task.Delay(Timeout.InfiniteTimeSpan, token))) {
+        var backoffStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        recover.Transfer += update => { if (update.Phase == "retry") backoffStarted.TrySetResult(); };
+        var waiting = recover.GenerateAsync("fake-key", "fake-model", "", "", stopRetry.Token);
+        await backoffStarted.Task.WaitAsync(TimeSpan.FromSeconds(3)); stopRetry.Cancel();
+        try { await waiting; throw new Exception("Cancel did not stop retry backoff"); }
+        catch (OperationCanceledException) { }
+        Check(transient.Calls == 1, "Sent another request after cancellation during backoff");
+    }
+    Console.WriteLine("PASS: 503 recovery beyond fixed retry count, Retry-After, backoff progress, unchanged prompt, retry SSE 503 without partial text, no retries for permanent/quota errors, cancellation during backoff.");
     handler.Truncated = true;
     try { await client.GenerateAsync("fake-key", "fake-model", "", "", default); throw new Exception("Truncated response accepted"); }
     catch (InvalidOperationException) { }
@@ -197,4 +238,20 @@ sealed class FeedStream : Stream
     public override void SetLength(long value) => throw new NotSupportedException();
     public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     public override void Flush() { }
+}
+
+sealed class RetryHandler(IEnumerable<Func<HttpResponseMessage>> responses) : HttpMessageHandler
+{
+    private readonly Queue<Func<HttpResponseMessage>> queue = new(responses);
+    public int Calls { get; private set; }
+    public List<string> Bodies { get; } = [];
+    public static HttpResponseMessage Success(string text) => new(HttpStatusCode.OK) {
+        Content = new StringContent(JsonSerializer.Serialize(new { candidates = new[] { new { finishReason = "STOP", content = new { parts = new[] { new { text } } } } } }), Encoding.UTF8, "application/json")
+    };
+    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+    {
+        Calls++; Bodies.Add(request.Content == null ? "" : await request.Content.ReadAsStringAsync(ct));
+        if (queue.Count == 0) throw new Exception("Unexpected extra retry");
+        return queue.Dequeue()();
+    }
 }

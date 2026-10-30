@@ -31,7 +31,8 @@ public partial class MainWindow : Window
         lastTransferUi = now; lastUiCharacters = value.Characters;
         Dispatcher.BeginInvoke(new Action(() => {
             if (running == null) return;
-            if (value.Phase == "sending") { lastPacket = DateTimeOffset.UtcNow; liveNetwork = "Đang chờ Gemini trả dữ liệu"; }
+            if (value.Phase == "retry") { lastPacket = null; liveNetwork = value.Message ?? "Gemini tạm thời quá tải · tự thử lại"; }
+            else if (value.Phase == "sending") { lastPacket = DateTimeOffset.UtcNow; liveNetwork = "Đang chờ Gemini trả dữ liệu"; }
             else if (value.Phase == "headers") { lastPacket = DateTimeOffset.UtcNow; liveNetwork = "Đã kết nối · Gemini đang xử lý"; }
             else { lastPacket = DateTimeOffset.UtcNow; liveNetwork = value.Phase == "complete" ? $"Đã nhận xong {value.Characters:N0} ký tự" : $"Đã nhận {value.Characters:N0} ký tự · {value.Events:N0} gói"; }
             UpdateLiveStatus();

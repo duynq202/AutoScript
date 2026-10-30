@@ -3,14 +3,43 @@ using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 namespace AutoScript.Services;
-public sealed record GeminiTransfer(string Phase, int Characters, int Events);
+public sealed record GeminiTransfer(string Phase, int Characters, int Events, string? Message = null);
 public sealed class GeminiClient : IDisposable
 {
     private readonly HttpClient http;
+    private readonly Func<TimeSpan, CancellationToken, Task> delay;
+    private sealed class TemporaryFailure(int code, TimeSpan? retryAfter = null) : Exception
+    {
+        public int Code { get; } = code;
+        public TimeSpan? RetryAfter { get; } = retryAfter;
+    }
+    private static bool IsTemporary(int code) => code is 408 or 500 or 502 or 503 or 504;
+    private async Task<T> WithRetryAsync<T>(Func<CancellationToken, Task<T>> operation, CancellationToken ct)
+    {
+        long attempts = 0;
+        while (true) {
+            ct.ThrowIfCancellationRequested();
+            try { return await operation(ct); }
+            catch (TemporaryFailure error) {
+                attempts++;
+                double backoff = Math.Min(60, 5 * Math.Pow(2, Math.Min(attempts - 1, 4))) + Random.Shared.NextDouble() * 3;
+                var remaining = TimeSpan.FromSeconds(backoff);
+                if (error.RetryAfter is { } requested && requested > remaining) remaining = requested;
+                while (remaining > TimeSpan.Zero) {
+                    ct.ThrowIfCancellationRequested();
+                    Transfer?.Invoke(new("retry", 0, 0, $"Gemini HTTP {error.Code} tạm thời · thử lại lần {attempts} sau {Math.Ceiling(remaining.TotalSeconds):N0}s · các phần đã xong được giữ"));
+                    var wait = remaining > TimeSpan.FromSeconds(1) ? TimeSpan.FromSeconds(1) : remaining;
+                    await delay(wait, ct);
+                    remaining -= wait;
+                }
+            }
+        }
+    }
     public event Action<GeminiTransfer>? Transfer;
-    public GeminiClient(HttpClient? transport = null)
+    public GeminiClient(HttpClient? transport = null, Func<TimeSpan, CancellationToken, Task>? retryDelay = null)
     {
         http = transport ?? new HttpClient();
+        delay = retryDelay ?? ((duration, ct) => Task.Delay(duration, ct));
         http.BaseAddress = new Uri("https://generativelanguage.googleapis.com/v1beta/");
         http.Timeout = Timeout.InfiniteTimeSpan;
     }
@@ -21,7 +50,11 @@ public sealed class GeminiClient : IDisposable
         if (body != null) req.Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
         var res = await http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
         if (res.IsSuccessStatusCode) return res;
-        var code = res.StatusCode; res.Dispose();
+        var code = res.StatusCode;
+        var retryHeader = res.Headers.RetryAfter;
+        TimeSpan? retryAfter = retryHeader?.Delta ?? (retryHeader?.Date is { } date ? date - DateTimeOffset.UtcNow : null);
+        res.Dispose();
+        if (IsTemporary((int)code)) throw new TemporaryFailure((int)code, retryAfter);
         throw new InvalidOperationException(code switch {
             HttpStatusCode.BadRequest => "Gemini từ chối yêu cầu. Kiểm tra model, kích thước đầu vào và quyền dùng model.",
             HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden => "API key không hợp lệ hoặc chưa được cấp quyền Gemini.",
@@ -34,7 +67,7 @@ public sealed class GeminiClient : IDisposable
     {
         var result = new List<string>(); string? token = null;
         do {
-            using var res = await SendResponseAsync(HttpMethod.Get, "models?pageSize=100" + (token == null ? "" : "&pageToken=" + Uri.EscapeDataString(token)), key, null, ct);
+            using var res = await WithRetryAsync(tokenCt => SendResponseAsync(HttpMethod.Get, "models?pageSize=100" + (token == null ? "" : "&pageToken=" + Uri.EscapeDataString(token)), key, null, tokenCt), ct);
             using var doc = JsonDocument.Parse(await res.Content.ReadAsStringAsync(ct));
             if (doc.RootElement.TryGetProperty("models", out var models))
                 foreach (var m in models.EnumerateArray())
@@ -44,7 +77,9 @@ public sealed class GeminiClient : IDisposable
         } while (!string.IsNullOrEmpty(token));
         return result.Distinct().Order().ToList();
     }
-    public async Task<string> GenerateAsync(string key, string model, string system, string prompt, CancellationToken ct)
+    public Task<string> GenerateAsync(string key, string model, string system, string prompt, CancellationToken ct)
+        => WithRetryAsync(token => GenerateOnceAsync(key, model, system, prompt, token), ct);
+    private async Task<string> GenerateOnceAsync(string key, string model, string system, string prompt, CancellationToken ct)
     {
         if (!System.Text.RegularExpressions.Regex.IsMatch(model, @"^[a-zA-Z0-9._-]+$")) throw new InvalidOperationException("Model ID không hợp lệ.");
         var text = new StringBuilder(); int packets = 0; string? finishReason = null;
@@ -52,7 +87,14 @@ public sealed class GeminiClient : IDisposable
         {
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
-            if (root.TryGetProperty("error", out _)) throw new InvalidOperationException("Gemini trả lỗi trong luồng. Các phần đã hoàn tất vẫn được giữ; có thể thử tiếp tục.");
+            if (root.TryGetProperty("error", out var error)) {
+                if (error.ValueKind == JsonValueKind.Object) {
+                    int code = error.TryGetProperty("code", out var value) && value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out int number) ? number : 0;
+                    if (code == 0 && error.TryGetProperty("status", out var status) && status.GetString() == "UNAVAILABLE") code = 503;
+                    if (IsTemporary(code)) throw new TemporaryFailure(code);
+                }
+                throw new InvalidOperationException("Gemini trả lỗi trong luồng. Các phần đã hoàn tất vẫn được giữ; có thể thử tiếp tục.");
+            }
             packets++;
             if (root.TryGetProperty("candidates", out var candidates) && candidates.GetArrayLength() > 0) {
                 var candidate = candidates[0];
