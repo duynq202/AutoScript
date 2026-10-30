@@ -2,9 +2,15 @@
 
 Ứng dụng Windows viết lại kịch bản theo file `rewrite-script_SKILL.md` đính kèm. Nhập Gemini API key, chọn model, nhập kịch bản gốc, khoảng số từ mong muốn và kịch bản tham khảo. Xuất kịch bản TXT UTF-8 và bài học riêng.
 
+## Tải bản đầy đủ
+
+Xem [GitHub Releases](https://github.com/duynq202/AutoScript/releases/latest) và tải **AutoScript-win-x64-full.zip**. Giải nén toàn bộ, mở **AutoScript.exe**. Gói này kèm .NET Desktop Runtime và Python 3.12.10 x64, không cần cài riêng. Cần Windows 10/11 x64, Internet và API key Gemini có quota. Có file SHA-256 đi kèm để kiểm tra tải xuống.
+
+Để tự build bản đầy đủ trên Windows với .NET 8 SDK: chạy `powershell -ExecutionPolicy Bypass -File scripts/Package-Windows.ps1`. Script tải Python từ gói NuGet chính thức có phiên bản cố định, kiểm tra bằng interpreter đi kèm và thử khởi động cửa sổ WPF. Kết quả ở `artifacts/AutoScript-win-x64-full.zip`. Workflow `Full Windows release` tự chạy khi đẩy tag `v*`; chỉ đăng Release sau khi build và kiểm tra thành công.
+
 ## Chạy trên Windows
 
-Cần Windows 10/11 x64, **.NET 8 SDK** và **Python 3** trong PATH (`py -3`, `python` hoặc `python3`). Không cần thư viện Python bên ngoài. Cần Internet tới `generativelanguage.googleapis.com` và API key Gemini có quota.
+Nếu chạy từ mã nguồn: cần Windows 10/11 x64, **.NET 8 SDK** và **Python 3** trong PATH (`py -3`, `python` hoặc `python3`). Không cần thư viện Python bên ngoài. Cần Internet tới `generativelanguage.googleapis.com` và API key Gemini có quota.
 
 ```powershell
 dotnet run --project AutoScript/AutoScript.csproj

@@ -1,0 +1,35 @@
+name: Full Windows release
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m unittest discover -s tests -v
+      - name: Package and test full Windows distribution
+        shell: pwsh
+        run: ./scripts/Package-Windows.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AutoScript-win-x64-full
+          path: |
+            artifacts/AutoScript-win-x64-full.zip
+            artifacts/AutoScript-win-x64-full.zip.sha256
+      - name: Publish GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$env:GITHUB_REF_NAME" artifacts/AutoScript-win-x64-full.zip artifacts/AutoScript-win-x64-full.zip.sha256 --verify-tag --title "AutoScript $env:GITHUB_REF_NAME — Windows x64 đầy đủ" --notes "Giải nén toàn bộ ZIP và mở AutoScript.exe. Đã kèm .NET Desktop Runtime và Python, không cần cài riêng. Cần Internet và Gemini API key có quota. Gói được kiểm tra Python, luồng viết lại bằng API giả lập và khởi động cửa sổ WPF trên Windows."

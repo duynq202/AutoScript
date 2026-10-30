@@ -20,5 +20,5 @@
 <StackPanel Grid.Row="2"><TextBlock Text="Góp ý để tạo lại bước hiện tại (không thay đổi các phần đã duyệt)"/><TextBox x:Name="Feedback" Height="65" AcceptsReturn="True" TextWrapping="Wrap"/></StackPanel>
 <WrapPanel Grid.Row="3"><Button x:Name="Approve" Content="Duyệt và tiếp tục" Click="Approve_Click" IsEnabled="False"/><Button x:Name="Revise" Content="Tạo lại theo góp ý" Click="Revise_Click" IsEnabled="False"/><Button x:Name="Export" Content="Xuất file TXT…" Click="Export_Click" IsEnabled="False"/></WrapPanel>
 </Grid></TabItem></TabControl>
-<DockPanel Grid.Row="2" Margin="0,12,0,0"><Button x:Name="Cancel" Content="Hủy tác vụ" DockPanel.Dock="Right" Click="Cancel_Click" IsEnabled="False"/><TextBlock x:Name="Status" Text="Sẵn sàng. Cần Windows, .NET tám và Python ba." VerticalAlignment="Center"/></DockPanel>
+<DockPanel Grid.Row="2" Margin="0,12,0,0"><Button x:Name="Cancel" Content="Hủy tác vụ" DockPanel.Dock="Right" Click="Cancel_Click" IsEnabled="False"/><TextBlock x:Name="Status" Text="Sẵn sàng. Bản đầy đủ đã kèm .NET và Python." VerticalAlignment="Center"/></DockPanel>
 </Grid></Window>

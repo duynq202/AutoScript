@@ -6,7 +6,11 @@ public sealed class PythonValidator
 {
     public async Task<Counts> CountAsync(string file, CancellationToken ct, bool countOnly = false)
     {
-        foreach (var (exe, prefix) in new[] { ("py", "-3"), ("python", ""), ("python3", "") })
+        var interpreters = new List<(string Exe, string Prefix)>();
+        var bundled = Path.Combine(AppContext.BaseDirectory, "Resources", "python", "python.exe");
+        if (OperatingSystem.IsWindows() && File.Exists(bundled)) interpreters.Add((bundled, "-I"));
+        interpreters.AddRange(new[] { ("py", "-3"), ("python", ""), ("python3", "") });
+        foreach (var (exe, prefix) in interpreters)
         {
             var info = new ProcessStartInfo(exe) { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true };
             if (prefix.Length > 0) info.ArgumentList.Add(prefix);

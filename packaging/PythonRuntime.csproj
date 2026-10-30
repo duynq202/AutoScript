@@ -1,0 +1,4 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><TargetFramework>net8.0</TargetFramework><NuGetAudit>false</NuGetAudit></PropertyGroup>
+  <ItemGroup><PackageDownload Include="python" Version="[3.12.10]" /></ItemGroup>
+</Project>
